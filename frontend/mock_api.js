@@ -411,9 +411,24 @@
   };
 
   window.copyText = function (text) {
-    navigator.clipboard.writeText(text).then(function () {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () {
+        window.toast("已复制到剪贴板");
+      });
+      return;
+    }
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
       window.toast("已复制到剪贴板");
-    });
+    } catch (e) {
+      window.toast("复制失败，请手动复制");
+    }
+    document.body.removeChild(ta);
   };
 
   window.downloadText = function (text, filename) {
