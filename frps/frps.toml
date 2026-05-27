@@ -1,0 +1,26 @@
+bindAddr = "0.0.0.0"
+bindPort = 7000
+
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "changeme"
+
+auth.method = "token"
+auth.token = "bearfrps-internal"
+
+transport.heartbeatTimeout = 15
+maxPortsPerClient = 1
+allowPorts = [
+  { start = 50000, end = 50100 }
+]
+
+log.to = "console"
+log.level = "info"
+detailedErrorsToClient = true
+
+[[httpPlugins]]
+name = "bearfrps-manager"
+addr = "127.0.0.1:8000"
+path = "/frps-plugin"
+ops = ["Login", "NewProxy", "CloseProxy", "Ping"]

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BearFRPs - 用户控制台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="shared.css">
+  <script src="mock_api.js"></script>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800" x-data="userApp()">
+
+  <header class="bg-white border-b border-gray-200 shadow-sm">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-gray-900">BearFRPs</span>
+        <span class="text-xs text-gray-400 hidden sm:inline">多租户内网穿透自助平台</span>
+      </div>
+      <div class="flex items-center gap-4 text-sm">
+        <span class="cursor-pointer hover:text-blue-600 transition-colors select-all font-mono text-xs bg-gray-100 px-2 py-1 rounded"
+              @click="copyText(uid)" x-text="uid" title="点击复制 UID"></span>
+        <span class="font-semibold" x-text="balance_mb + ' MB'"></span>
+        <button class="btn btn-success btn-sm" @click="recharge()" :disabled="recharging"
+                x-text="recharging ? '充值中...' : '免费充值 +100MB'"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-base font-semibold text-gray-700">我的连接</h2>
+      <button class="btn btn-primary btn-sm" @click="openCreateModal = true">+ 申请新连接</button>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <table>
+        <thead>
+          <tr class="bg-gray-50">
+            <th>名称</th>
+            <th>公网端口</th>
+            <th>本地端口</th>
+            <th>状态</th>
+            <th>已用 / 限额</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="p in proxies" :key="p.id">
+            <tr :class="statusClass(p)">
+              <td class="font-medium" x-text="p.name"></td>
+              <td class="font-mono text-sm" x-text="p.frps_remote_port"></td>
+              <td class="font-mono text-sm" x-text="p.actual_local_port != null ? p.actual_local_port : '-'"></td>
+              <td>
+                <span class="status-badge" :class="statusBadge(p).cls" x-text="statusBadge(p).text"></span>
+              </td>
+              <td>
+                <div class="flex items-center gap-2">
+                  <div class="progress-bar-bg flex-1">
+                    <div class="progress-bar-fill"
+                         :class="trafficPercent(p) > 90 ? 'fill-danger' : trafficPercent(p) > 70 ? 'fill-warn' : 'fill-ok'"
+                         :style="'width:' + Math.min(trafficPercent(p), 100) + '%'"></div>
+                  </div>
+                  <span class="text-xs text-gray-500 whitespace-nowrap"
+                        x-text="formatBytes(p.traffic_used_bytes) + ' / ' + p.traffic_limit_mb + ' MB'"></span>
+                </div>
+              </td>
+              <td class="space-x-1">
+                <button class="btn btn-secondary btn-sm" @click="viewScripts(p)">查看脚本</button>
+                <button class="btn btn-danger btn-sm" @click="deleteProxy(p)">删除</button>
+              </td>
+            </tr>
+          </template>
+          <tr x-show="proxies.length === 0">
+            <td colspan="6" class="text-center text-gray-400 py-8">暂无连接，点击右上角申请</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <div x-show="openCreateModal" class="modal-overlay" @click.self="openCreateModal = false" x-cloak>
+    <div class="modal-content p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold text-lg">申请新连接</h3>
+        <button @click="openCreateModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+      </div>
+      <div class="space-y-4" x-show="!createResult">
+        <div>
+          <label class="block text-sm font-medium text-gray-600 mb-1">名称</label>
+          <input class="input" x-model="createForm.name" placeholder="1-20 字符" maxlength="20">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-600 mb-1">
+            分配流量 (MB)
+            <span class="text-gray-400 font-normal" x-text="'(余额 ' + balance_mb + ' MB)'"></span>
+          </label>
+          <input class="input" type="number" x-model.number="createForm.traffic_mb" min="1" :max="balance_mb">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-600 mb-1">限速 KB/s（可选，默认 1024）</label>
+          <input class="input" type="number" x-model.number="createForm.speed_limit_kbps" placeholder="1024">
+        </div>
+        <div x-show="createError" class="text-red-600 text-sm" x-text="createError"></div>
+        <div class="flex justify-end gap-2">
+          <button class="btn btn-secondary" @click="openCreateModal = false">取消</button>
+          <button class="btn btn-primary" @click="createProxy()" :disabled="creating" x-text="creating ? '申请中...' : '确认申请'"></button>
+        </div>
+      </div>
+      <div x-show="createResult">
+        <p class="text-green-600 mb-4 text-sm">连接创建成功！请查看下方配置和脚本。</p>
+        <div x-data="{ mt: 'config', st: 'linux' }">
+          <div class="flex border-b border-gray-200 mb-3">
+            <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+              :class="mt === 'config' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+              @click="mt = 'config'">配置文件</button>
+            <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+              :class="mt === 'frpc' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+              @click="mt = 'frpc'">frpc 启动脚本</button>
+            <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+              :class="mt === 'demo' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+              @click="mt = 'demo'">demo 启动脚本</button>
+          </div>
+          <div x-show="mt !== 'config'" class="flex gap-1 mb-3">
+            <button class="px-3 py-1 text-xs rounded-full transition-colors"
+              :class="st === 'linux' ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+              @click="st = 'linux'">Linux</button>
+            <button class="px-3 py-1 text-xs rounded-full transition-colors"
+              :class="st === 'mac' ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+              @click="st = 'mac'">Mac</button>
+            <button class="px-3 py-1 text-xs rounded-full transition-colors"
+              :class="st === 'windows' ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+              @click="st = 'windows'">Windows</button>
+          </div>
+          <pre class="bg-gray-900 text-green-300 text-xs p-4 rounded-lg overflow-x-auto max-h-72 leading-relaxed"
+               x-text="getScriptContent(createResult, mt, st)" style="white-space:pre-wrap;word-break:break-all;"></pre>
+          <div class="flex justify-end gap-2 mt-3">
+            <button class="btn btn-secondary btn-sm" @click="copyText(getScriptContent(createResult, mt, st))">复制</button>
+            <button class="btn btn-primary btn-sm" @click="downloadText(getScriptContent(createResult, mt, st), getScriptFilename(mt, st))">下载</button>
+          </div>
+        </div>
+        <div class="flex justify-end mt-4">
+          <button class="btn btn-secondary" @click="openCreateModal = false; createResult = null; loadProxies()">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div x-show="openScriptModal" class="modal-overlay" @click.self="openScriptModal = false" x-cloak>
+    <div class="modal-content p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold text-lg">配置 &amp; 脚本</h3>
+        <button @click="openScriptModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+      </div>
+      <div x-data="{ mt: 'config', st: 'linux' }">
+        <div class="flex border-b border-gray-200 mb-3">
+          <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+            :class="mt === 'config' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            @click="mt = 'config'">配置文件</button>
+          <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+            :class="mt === 'frpc' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            @click="mt = 'frpc'">frpc 启动脚本</button>
+          <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+            :class="mt === 'demo' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            @click="mt = 'demo'">demo 启动脚本</button>
+        </div>
+        <div x-show="mt !== 'config'" class="flex gap-1 mb-3">
+          <button class="px-3 py-1 text-xs rounded-full transition-colors"
+            :class="st === 'linux' ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+            @click="st = 'linux'">Linux</button>
+          <button class="px-3 py-1 text-xs rounded-full transition-colors"
+            :class="st === 'mac' ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+            @click="st = 'mac'">Mac</button>
+          <button class="px-3 py-1 text-xs rounded-full transition-colors"
+            :class="st === 'windows' ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+            @click="st = 'windows'">Windows</button>
+        </div>
+        <pre class="bg-gray-900 text-green-300 text-xs p-4 rounded-lg overflow-x-auto max-h-72 leading-relaxed"
+             x-text="getScriptContent(scriptData, mt, st)" style="white-space:pre-wrap;word-break:break-all;"></pre>
+        <div class="flex justify-end gap-2 mt-3">
+          <button class="btn btn-secondary btn-sm" @click="copyText(getScriptContent(scriptData, mt, st))">复制</button>
+          <button class="btn btn-primary btn-sm" @click="downloadText(getScriptContent(scriptData, mt, st), getScriptFilename(mt, st))">下载</button>
+        </div>
+      </div>
+      <div class="flex justify-end mt-4">
+        <button class="btn btn-secondary" @click="openScriptModal = false">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function userApp() {
+      return {
+        uid: '',
+        balance_mb: 0,
+        total_recharged_mb: 0,
+        proxies: [],
+        recharging: false,
+        openCreateModal: false,
+        openScriptModal: false,
+        createForm: { name: '', traffic_mb: 0, speed_limit_kbps: 1024 },
+        createError: '',
+        creating: false,
+        createResult: null,
+        scriptData: null,
+        pollTimer: null,
+
+        async init() {
+          await this.loadUser();
+          await this.loadProxies();
+          this.createForm.traffic_mb = this.balance_mb;
+          this.pollTimer = setInterval(() => this.loadProxies(), 5000);
+        },
+
+        async loadUser() {
+          const res = await fetch('/api/user/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' });
+          const data = await res.json();
+          this.uid = data.uid;
+          this.balance_mb = data.balance_mb;
+          this.total_recharged_mb = data.total_recharged_mb;
+        },
+
+        async loadProxies() {
+          const res = await fetch('/api/proxies', { credentials: 'same-origin' });
+          const data = await res.json();
+          this.proxies = (data.proxies || []).filter(function (p) { return p.status !== 'deleted'; });
+        },
+
+        async recharge() {
+          this.recharging = true;
+          try {
+            const res = await fetch('/api/user/recharge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' });
+            const data = await res.json();
+            this.balance_mb = data.balance_mb;
+            this.total_recharged_mb = data.total_recharged_mb;
+            this.createForm.traffic_mb = this.balance_mb;
+            toast('充值成功 +100MB');
+          } finally {
+            this.recharging = false;
+          }
+        },
+
+        async createProxy() {
+          this.createError = '';
+          if (!this.createForm.name.trim()) { this.createError = '请输入名称'; return; }
+          if (this.createForm.traffic_mb <= 0) { this.createError = '请输入流量额度'; return; }
+          this.creating = true;
+          try {
+            const res = await fetch('/api/proxies', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify(this.createForm)
+            });
+            const data = await res.json();
+            if (!res.ok) { this.createError = extractDetail(data) || '创建失败'; return; }
+            this.createResult = data;
+            this.balance_mb -= this.createForm.traffic_mb;
+            toast('连接创建成功');
+          } finally {
+            this.creating = false;
+          }
+        },
+
+        async viewScripts(proxy) {
+          const res = await fetch('/api/proxies/' + proxy.id + '/scripts', { credentials: 'same-origin' });
+          const data = await res.json();
+          this.scriptData = data;
+          this.openScriptModal = true;
+        },
+
+        async deleteProxy(proxy) {
+          if (!confirm('确定删除连接 "' + proxy.name + '"？')) return;
+          await fetch('/api/proxies/' + proxy.id, { method: 'DELETE', credentials: 'same-origin' });
+          await this.loadProxies();
+          toast('已删除');
+        },
+
+        trafficPercent(p) {
+          if (!p.traffic_limit_mb) return 0;
+          return (p.traffic_used_bytes / (p.traffic_limit_mb * 1024 * 1024)) * 100;
+        }
+      };
+    }
+
+    function getScriptContent(data, mainTab, subTab) {
+      if (!data) return '';
+      if (mainTab === 'config') return data.frpc_config || '';
+      if (mainTab === 'frpc') {
+        var s = data.scripts && data.scripts.frpc;
+        return s ? (s[subTab] || '') : '';
+      }
+      if (mainTab === 'demo') {
+        var s2 = data.scripts && data.scripts.demo;
+        return s2 ? (s2[subTab] || '') : '';
+      }
+      return '';
+    }
+
+    function getScriptFilename(mainTab, subTab) {
+      if (mainTab === 'config') return 'frpc.toml';
+      return mainTab + (subTab === 'windows' ? '.ps1' : '.sh');
+    }
+
+    function extractDetail(data) {
+      if (!data) return '';
+      if (typeof data.detail === 'string') return data.detail;
+      if (Array.isArray(data.detail) && data.detail.length > 0) {
+        return data.detail.map(function (e) { return e.msg || String(e); }).join('; ');
+      }
+      return String(data.detail || '');
+    }
+  </script>
+</body>
+</html>
