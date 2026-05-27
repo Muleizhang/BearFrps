@@ -12,12 +12,19 @@
 <body class="bg-gray-50 min-h-screen text-gray-800" x-data="showApp()">
 
   <header class="bg-white border-b border-gray-200 shadow-sm">
-    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <span class="text-lg font-bold text-gray-900">在线服务</span>
-        <span class="text-sm text-gray-400" x-text="'当前在线 ' + proxies.length + ' 个'"></span>
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+      <div class="flex items-center gap-4">
+        <span class="text-lg font-bold text-gray-900">BearFRPs</span>
+        <nav class="flex items-center gap-1">
+          <a href="/user" class="px-3 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors">用户端</a>
+          <a href="/admin" class="px-3 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors">管理端</a>
+          <a href="/show" class="px-3 py-1.5 text-sm font-medium rounded-md bg-blue-100 text-blue-700">展示页</a>
+        </nav>
       </div>
-      <button class="btn btn-secondary btn-sm" @click="manualRefresh()">手动刷新</button>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-gray-400" x-text="'当前在线 ' + proxies.length + ' 个'"></span>
+        <button class="btn btn-secondary btn-sm" @click="manualRefresh()">手动刷新</button>
+      </div>
     </div>
   </header>
 

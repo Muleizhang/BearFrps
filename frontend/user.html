@@ -12,10 +12,14 @@
 <body class="bg-gray-50 min-h-screen text-gray-800" x-data="userApp()">
 
   <header class="bg-white border-b border-gray-200 shadow-sm">
-    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between flex-wrap gap-2">
-      <div class="flex items-center gap-3">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+      <div class="flex items-center gap-4">
         <span class="text-lg font-bold text-gray-900">BearFRPs</span>
-        <span class="text-xs text-gray-400 hidden sm:inline">多租户内网穿透自助平台</span>
+        <nav class="flex items-center gap-1">
+          <a href="/user" class="px-3 py-1.5 text-sm font-medium rounded-md bg-blue-100 text-blue-700">用户端</a>
+          <a href="/admin" class="px-3 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors">管理端</a>
+          <a href="/show" class="px-3 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors">展示页</a>
+        </nav>
       </div>
       <div class="flex items-center gap-4 text-sm">
         <span class="cursor-pointer hover:text-blue-600 transition-colors select-all font-mono text-xs bg-gray-100 px-2 py-1 rounded"
@@ -27,10 +31,10 @@
     </div>
   </header>
 
-  <main class="max-w-5xl mx-auto px-4 py-6">
+  <main class="max-w-7xl mx-auto px-4 py-6">
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-base font-semibold text-gray-700">我的连接</h2>
-      <button class="btn btn-primary btn-sm" @click="openCreateModal = true">+ 申请新连接</button>
+      <button class="btn btn-primary btn-sm" @click="openCreateModal = true; createResult = null; createError = ''">+ 申请新连接</button>
     </div>
 
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
@@ -79,11 +83,11 @@
     </div>
   </main>
 
-  <div x-show="openCreateModal" class="modal-overlay" @click.self="openCreateModal = false" x-cloak>
+  <div x-show="openCreateModal" class="modal-overlay" @click.self="openCreateModal = false; createResult = null" x-cloak>
     <div class="modal-content p-6">
       <div class="flex items-center justify-between mb-4">
         <h3 class="font-semibold text-lg">申请新连接</h3>
-        <button @click="openCreateModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+        <button @click="openCreateModal = false; createResult = null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
       </div>
       <div class="space-y-4" x-show="!createResult">
         <div>
