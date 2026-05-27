@@ -15,6 +15,8 @@ if (-not (Test-Path "frpc.exe")) {
     Remove-Item -Recurse -Force "frp_tmp", "frp.zip"
 }
 
+Unblock-File ".\frpc.exe" -ErrorAction SilentlyContinue
+
 @"
 serverAddr = "{{SERVER_HOST}}"
 serverPort = {{SERVER_PORT}}

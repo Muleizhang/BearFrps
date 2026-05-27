@@ -171,6 +171,8 @@ if (-not (Test-Path "frpc.exe")) {
     Remove-Item -Recurse -Force "frp_tmp", "frp.zip"
 }
 
+Unblock-File ".\frpc.exe" -ErrorAction SilentlyContinue
+
 @"
 serverAddr = "{{SERVER_HOST}}"
 serverPort = {{SERVER_PORT}}
@@ -252,6 +254,8 @@ Write-Host "未找到 Python，使用预编译 Go 兜底版"
 if (-not (Test-Path "demo-server.exe")) {
     Invoke-WebRequest -Uri "{{DEMO_BIN_BASE_URL}}/demo-server-windows-amd64.exe" -OutFile "demo-server.exe"
 }
+
+Unblock-File ".\demo-server.exe" -ErrorAction SilentlyContinue
 .\demo-server.exe --port $port
 """
 
