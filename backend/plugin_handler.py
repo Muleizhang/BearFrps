@@ -40,11 +40,7 @@ async def _handle_login(content: dict[str, Any]) -> dict[str, Any]:
         reason = _reject_reason_unlocked(proxy)
         if reason:
             return _reject(reason)
-
-        assert proxy is not None
-        content["privilege_key"] = _frps_privilege_key(content.get("timestamp"))
-        content.setdefault("metas", {})["token"] = proxy.token
-        return _modify(content)
+        return _allow()
 
 
 async def _handle_new_proxy(content: dict[str, Any]) -> dict[str, Any]:
@@ -87,8 +83,9 @@ async def _handle_ping(content: dict[str, Any]) -> dict[str, Any]:
         reason = _reject_reason_unlocked(proxy)
         if reason:
             return _reject(reason)
-        content["privilege_key"] = _frps_privilege_key(content.get("timestamp"))
-        return _modify(content)
+        if proxy:
+            proxy.last_seen_at = datetime.now(UTC)
+        return _allow()
 
 
 def _extract_token(content: dict[str, Any]) -> str | None:
@@ -124,15 +121,6 @@ def _reject_reason_unlocked(proxy: Proxy | None) -> str | None:
     if proxy.traffic_used_bytes >= proxy.traffic_limit_mb * 1024 * 1024:
         return "traffic limit exceeded"
     return None
-
-
-def _frps_privilege_key(timestamp: Any) -> str:
-    try:
-        ts = int(timestamp)
-    except (TypeError, ValueError):
-        ts = 0
-    raw = f"{settings.frps_auth_token}{ts}".encode("utf-8")
-    return hashlib.md5(raw, usedforsecurity=False).hexdigest()
 
 
 def _find_proxy_by_privilege_key_unlocked(content: dict[str, Any]) -> Proxy | None:

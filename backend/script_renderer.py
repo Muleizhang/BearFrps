@@ -51,7 +51,7 @@ class ScriptRenderer:
             f'serverAddr = "{settings.server_public_host}"\n'
             f"serverPort = {settings.frps_bind_port}\n\n"
             'auth.method = "token"\n'
-            f'auth.token = "{proxy.token}"\n'
+            f'auth.token = "{settings.frps_auth_token}"\n'
             f'metadatas.token = "{proxy.token}"\n\n'
             "[[proxies]]\n"
             f'name = "{proxy.frps_name}"\n'
@@ -68,6 +68,7 @@ class ScriptRenderer:
         replacements = {
             "{{SERVER_HOST}}": settings.server_public_host,
             "{{SERVER_PORT}}": str(settings.frps_bind_port),
+            "{{FRPS_AUTH_TOKEN}}": settings.frps_auth_token,
             "{{TOKEN}}": proxy.token,
             "{{PROXY_NAME}}": proxy.frps_name,
             "{{REMOTE_PORT}}": str(proxy.frps_remote_port),
@@ -134,7 +135,7 @@ serverAddr = "{{SERVER_HOST}}"
 serverPort = {{SERVER_PORT}}
 
 auth.method = "token"
-auth.token = "{{TOKEN}}"
+auth.token = "{{FRPS_AUTH_TOKEN}}"
 metadatas.token = "{{TOKEN}}"
 
 [[proxies]]
@@ -174,7 +175,7 @@ serverAddr = "{{SERVER_HOST}}"
 serverPort = {{SERVER_PORT}}
 
 auth.method = "token"
-auth.token = "{{TOKEN}}"
+auth.token = "{{FRPS_AUTH_TOKEN}}"
 metadatas.token = "{{TOKEN}}"
 
 [[proxies]]

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 
-from backend.deps import settings
 from backend.models import Proxy, ProxyStatus, User, store
 from backend.plugin_handler import _handle_login, _handle_new_proxy
 from backend.poller import UsagePoller
@@ -28,10 +26,7 @@ def test_plugin_accepts_user_token_and_rewrites_frps_auth():
             {"timestamp": 123, "metas": {"token": "user-token"}, "privilege_key": "old"}
         )
         assert login["reject"] is False
-        expected = hashlib.md5(
-            f"{settings.frps_auth_token}123".encode(), usedforsecurity=False
-        ).hexdigest()
-        assert login["content"]["privilege_key"] == expected
+        assert login["unchange"] is True
 
         new_proxy = await _handle_new_proxy(
             {
