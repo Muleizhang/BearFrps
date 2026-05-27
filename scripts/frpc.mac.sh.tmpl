@@ -34,6 +34,7 @@ serverPort = {{SERVER_PORT}}
 
 auth.method = "token"
 auth.token = "{{TOKEN}}"
+metadatas.token = "{{TOKEN}}"
 
 [[proxies]]
 name = "{{PROXY_NAME}}"
@@ -41,6 +42,8 @@ type = "tcp"
 localIP = "127.0.0.1"
 localPort = ${PORT}
 remotePort = {{REMOTE_PORT}}
+transport.bandwidthLimit = "{{DEFAULT_SPEED_LIMIT_KBPS}}KB"
+transport.bandwidthLimitMode = "server"
 EOF
 
 echo "启动 frpc, 公网端口 {{REMOTE_PORT}}, 本地端口 ${PORT}"
