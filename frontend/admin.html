@@ -180,11 +180,12 @@
             const res = await fetch('/api/admin/login', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
               body: JSON.stringify(this.loginForm)
             });
             if (!res.ok) {
               const data = await res.json();
-              this.loginError = data.detail || '登录失败';
+              this.loginError = extractDetail(data) || '登录失败';
               return;
             }
             this.loggedIn = true;
@@ -196,7 +197,7 @@
         },
 
         async logout() {
-          await fetch('/api/admin/logout', { method: 'POST' });
+          await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
           this.loggedIn = false;
           if (this.pollTimer) clearInterval(this.pollTimer);
         },
@@ -207,14 +208,14 @@
         },
 
         async loadProxies() {
-          const res = await fetch('/api/admin/proxies');
+          const res = await fetch('/api/admin/proxies', { credentials: 'same-origin' });
           if (res.status === 401) { this.loggedIn = false; return; }
           const data = await res.json();
           this.proxies = data.proxies || [];
         },
 
         async loadUsers() {
-          const res = await fetch('/api/admin/users');
+          const res = await fetch('/api/admin/users', { credentials: 'same-origin' });
           if (res.status === 401) { this.loggedIn = false; return; }
           const data = await res.json();
           this.users = data.users || [];
@@ -229,20 +230,20 @@
         },
 
         async stopProxy(p) {
-          await fetch('/api/admin/proxies/' + p.id + '/stop', { method: 'POST' });
+          await fetch('/api/admin/proxies/' + p.id + '/stop', { method: 'POST', credentials: 'same-origin' });
           await this.loadProxies();
           toast('已停用');
         },
 
         async startProxy(p) {
-          await fetch('/api/admin/proxies/' + p.id + '/start', { method: 'POST' });
+          await fetch('/api/admin/proxies/' + p.id + '/start', { method: 'POST', credentials: 'same-origin' });
           await this.loadProxies();
           toast('已启用');
         },
 
         async deleteProxy(p) {
           if (!confirm('确定删除 "' + p.name + '"？端口将被释放。')) return;
-          await fetch('/api/admin/proxies/' + p.id, { method: 'DELETE' });
+          await fetch('/api/admin/proxies/' + p.id, { method: 'DELETE', credentials: 'same-origin' });
           await this.loadProxies();
           toast('已删除');
         },
@@ -252,6 +253,15 @@
           return (p.traffic_used_bytes / (p.traffic_limit_mb * 1024 * 1024)) * 100;
         }
       };
+    }
+
+    function extractDetail(data) {
+      if (!data) return '';
+      if (typeof data.detail === 'string') return data.detail;
+      if (Array.isArray(data.detail) && data.detail.length > 0) {
+        return data.detail.map(function (e) { return e.msg || String(e); }).join('; ');
+      }
+      return String(data.detail || '');
     }
   </script>
 </body>

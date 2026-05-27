@@ -213,7 +213,7 @@
         },
 
         async loadUser() {
-          const res = await fetch('/api/user/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          const res = await fetch('/api/user/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' });
           const data = await res.json();
           this.uid = data.uid;
           this.balance_mb = data.balance_mb;
@@ -221,15 +221,15 @@
         },
 
         async loadProxies() {
-          const res = await fetch('/api/proxies');
+          const res = await fetch('/api/proxies', { credentials: 'same-origin' });
           const data = await res.json();
-          this.proxies = data.proxies || [];
+          this.proxies = (data.proxies || []).filter(function (p) { return p.status !== 'deleted'; });
         },
 
         async recharge() {
           this.recharging = true;
           try {
-            const res = await fetch('/api/user/recharge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            const res = await fetch('/api/user/recharge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' });
             const data = await res.json();
             this.balance_mb = data.balance_mb;
             this.total_recharged_mb = data.total_recharged_mb;
@@ -249,10 +249,11 @@
             const res = await fetch('/api/proxies', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
               body: JSON.stringify(this.createForm)
             });
             const data = await res.json();
-            if (!res.ok) { this.createError = data.detail || '创建失败'; return; }
+            if (!res.ok) { this.createError = extractDetail(data) || '创建失败'; return; }
             this.createResult = data;
             this.balance_mb -= this.createForm.traffic_mb;
             toast('连接创建成功');
@@ -262,7 +263,7 @@
         },
 
         async viewScripts(proxy) {
-          const res = await fetch('/api/proxies/' + proxy.id + '/scripts');
+          const res = await fetch('/api/proxies/' + proxy.id + '/scripts', { credentials: 'same-origin' });
           const data = await res.json();
           this.scriptData = data;
           this.openScriptModal = true;
@@ -270,7 +271,7 @@
 
         async deleteProxy(proxy) {
           if (!confirm('确定删除连接 "' + proxy.name + '"？')) return;
-          await fetch('/api/proxies/' + proxy.id, { method: 'DELETE' });
+          await fetch('/api/proxies/' + proxy.id, { method: 'DELETE', credentials: 'same-origin' });
           await this.loadProxies();
           toast('已删除');
         },
@@ -299,6 +300,15 @@
     function getScriptFilename(mainTab, subTab) {
       if (mainTab === 'config') return 'frpc.toml';
       return mainTab + (subTab === 'windows' ? '.ps1' : '.sh');
+    }
+
+    function extractDetail(data) {
+      if (!data) return '';
+      if (typeof data.detail === 'string') return data.detail;
+      if (Array.isArray(data.detail) && data.detail.length > 0) {
+        return data.detail.map(function (e) { return e.msg || String(e); }).join('; ');
+      }
+      return String(data.detail || '');
     }
   </script>
 </body>

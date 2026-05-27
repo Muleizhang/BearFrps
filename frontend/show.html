@@ -67,7 +67,7 @@
 
         async loadOnline() {
           try {
-            const res = await fetch('/api/show/online');
+            const res = await fetch('/api/show/online', { credentials: 'same-origin' });
             const data = await res.json();
             var newProxies = data.proxies || [];
 
