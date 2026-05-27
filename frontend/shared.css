@@ -1,0 +1,231 @@
+:root {
+  --status-online-border: #10b981;
+  --status-online-bg: #d1fae5;
+  --status-offline-border: #ef4444;
+  --status-offline-bg: #fee2e2;
+  --status-disabled-border: #9ca3af;
+  --status-disabled-bg: #f3f4f6;
+}
+
+.row-online {
+  border-left: 4px solid var(--status-online-border);
+  background: var(--status-online-bg);
+}
+
+.row-offline {
+  border-left: 4px solid var(--status-offline-border);
+  background: var(--status-offline-bg);
+}
+
+.row-disabled {
+  border-left: 4px solid var(--status-disabled-border);
+  background: var(--status-disabled-bg);
+}
+
+.card-online {
+  border: 2px solid var(--status-online-border);
+  background: var(--status-online-bg);
+}
+
+.card-offline {
+  border: 2px solid var(--status-offline-border);
+  background: var(--status-offline-bg);
+}
+
+.card-disabled {
+  border: 2px solid var(--status-disabled-border);
+  background: var(--status-disabled-bg);
+}
+
+.progress-bar-bg {
+  background: #e5e7eb;
+  border-radius: 9999px;
+  height: 8px;
+  overflow: hidden;
+  min-width: 60px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.3s ease;
+}
+
+.progress-bar-fill.fill-ok {
+  background: var(--status-online-border);
+}
+
+.progress-bar-fill.fill-warn {
+  background: #f59e0b;
+}
+
+.progress-bar-fill.fill-danger {
+  background: var(--status-offline-border);
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal-content {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  max-height: 85vh;
+  overflow-y: auto;
+  width: 90%;
+  max-width: 700px;
+}
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f2937;
+  color: #f9fafb;
+  padding: 8px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  z-index: 100;
+  animation: toast-in 0.2s ease, toast-out 0.3s ease 1.5s forwards;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes toast-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-primary {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+.btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.btn-success {
+  background: var(--status-online-border);
+  color: #fff;
+  border-color: var(--status-online-border);
+}
+
+.btn-success:hover {
+  background: #059669;
+}
+
+.btn-danger {
+  background: #fff;
+  color: var(--status-offline-border);
+  border-color: var(--status-offline-border);
+}
+
+.btn-danger:hover {
+  background: #fef2f2;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+.btn-secondary:hover {
+  background: #f9fafb;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+table th {
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 600;
+  color: #6b7280;
+  border-bottom: 2px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #f3f4f6;
+  white-space: nowrap;
+}
+
+table tbody tr {
+  transition: background 0.15s;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-badge.badge-online {
+  background: var(--status-online-bg);
+  color: #065f46;
+}
+
+.status-badge.badge-offline {
+  background: var(--status-offline-bg);
+  color: #991b1b;
+}
+
+.status-badge.badge-disabled {
+  background: var(--status-disabled-bg);
+  color: #4b5563;
+}

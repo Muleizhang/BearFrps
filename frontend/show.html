@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BearFRPs - 在线服务</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="shared.css">
+  <script src="mock_api.js"></script>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800" x-data="showApp()">
+
+  <header class="bg-white border-b border-gray-200 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-gray-900">在线服务</span>
+        <span class="text-sm text-gray-400" x-text="'当前在线 ' + proxies.length + ' 个'"></span>
+      </div>
+      <button class="btn btn-secondary btn-sm" @click="manualRefresh()">手动刷新</button>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <template x-for="p in proxies" :key="p.id">
+        <div class="rounded-lg overflow-hidden shadow-sm card-online">
+          <div class="flex items-center justify-between px-3 py-2 border-b border-green-200 bg-green-50">
+            <span class="font-medium text-sm truncate" x-text="p.name"></span>
+            <span class="text-xs text-gray-500 font-mono" x-text="p.remote_port"></span>
+          </div>
+          <div class="bg-white">
+            <iframe :src="p.public_url"
+                    class="w-full border-0"
+                    style="height:300px"
+                    loading="lazy"
+                    sandbox="allow-scripts allow-same-origin allow-forms"
+                    :title="p.name"></iframe>
+          </div>
+          <div class="px-3 py-2 border-t border-green-200 bg-green-50 text-right">
+            <a :href="p.public_url" target="_blank" rel="noopener"
+               class="text-xs text-blue-600 hover:text-blue-800 transition-colors">
+              在新窗口打开 &#8599;
+            </a>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <div x-show="proxies.length === 0" class="text-center py-20">
+      <p class="text-gray-400 text-lg">暂无在线服务</p>
+      <p class="text-gray-300 text-sm mt-2">当有用户连接 frpc 并启动 demo 服务后，这里会自动显示</p>
+    </div>
+  </main>
+
+  <script>
+    function showApp() {
+      return {
+        proxies: [],
+        prevIds: [],
+        pollTimer: null,
+
+        async init() {
+          await this.loadOnline();
+          this.pollTimer = setInterval(() => this.loadOnline(), 5000);
+        },
+
+        async loadOnline() {
+          try {
+            const res = await fetch('/api/show/online');
+            const data = await res.json();
+            var newProxies = data.proxies || [];
+
+            var newIds = newProxies.map(function (p) { return p.id; }).sort();
+            var oldIds = this.prevIds.slice().sort();
+
+            if (JSON.stringify(newIds) !== JSON.stringify(oldIds)) {
+              this.proxies = newProxies;
+              this.prevIds = newIds;
+            }
+          } catch (e) {
+            console.error('Failed to load online proxies:', e);
+          }
+        },
+
+        async manualRefresh() {
+          this.proxies = [];
+          this.prevIds = [];
+          await this.loadOnline();
+          toast('已刷新');
+        }
+      };
+    }
+  </script>
+</body>
+</html>

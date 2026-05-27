@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BearFRPs - 管理员控制台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="shared.css">
+  <script src="mock_api.js"></script>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800" x-data="adminApp()">
+
+  <template x-if="!loggedIn">
+    <div class="min-h-screen flex items-center justify-center">
+      <div class="bg-white rounded-lg shadow-md border border-gray-200 p-8 w-full max-w-sm">
+        <h2 class="text-lg font-bold text-center mb-6">管理员登录</h2>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">用户名</label>
+            <input class="input" x-model="loginForm.username" @keydown.enter="login()">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">密码</label>
+            <input class="input" type="password" x-model="loginForm.password" @keydown.enter="login()">
+          </div>
+          <div x-show="loginError" class="text-red-600 text-sm" x-text="loginError"></div>
+          <button class="btn btn-primary w-full justify-center" @click="login()" :disabled="loggingIn"
+                  x-text="loggingIn ? '登录中...' : '登录'"></button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="loggedIn">
+    <div>
+      <header class="bg-white border-b border-gray-200 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+          <span class="text-lg font-bold text-gray-900">管理员控制台</span>
+          <button class="btn btn-secondary btn-sm" @click="logout()">登出</button>
+        </div>
+      </header>
+
+      <div class="max-w-7xl mx-auto px-4 py-4">
+        <div class="flex border-b border-gray-200 mb-4">
+          <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+                  :class="tab === 'proxies' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                  @click="tab = 'proxies'">连接总览</button>
+          <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+                  :class="tab === 'users' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                  @click="tab = 'users'">用户列表</button>
+        </div>
+
+        <div x-show="tab === 'proxies'">
+          <div class="flex items-center gap-3 mb-3 flex-wrap">
+            <input class="input" style="max-width:200px" placeholder="搜索 UID..." x-model="filterUid">
+            <select class="input" style="max-width:160px" x-model="filterStatus">
+              <option value="">全部状态</option>
+              <option value="active">活跃</option>
+              <option value="stopped_by_admin">已停用</option>
+              <option value="deleted">已删除</option>
+            </select>
+            <span class="text-xs text-gray-400" x-text="'共 ' + filteredProxies.length + ' 条'"></span>
+          </div>
+
+          <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
+            <table>
+              <thead>
+                <tr class="bg-gray-50">
+                  <th>UID</th>
+                  <th>名称</th>
+                  <th>公网端口</th>
+                  <th>Token</th>
+                  <th>本地端口</th>
+                  <th>限速</th>
+                  <th>已用 / 限额</th>
+                  <th>当前速率</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="p in filteredProxies" :key="p.id">
+                  <tr :class="statusClass(p)">
+                    <td class="font-mono text-xs" x-text="p.uid"></td>
+                    <td class="font-medium" x-text="p.name"></td>
+                    <td class="font-mono text-sm" x-text="p.frps_remote_port"></td>
+                    <td class="font-mono text-xs text-gray-500 max-w-[120px] truncate" x-text="p.token" :title="p.token"></td>
+                    <td class="font-mono text-sm" x-text="p.actual_local_port != null ? p.actual_local_port : '-'"></td>
+                    <td class="text-sm" x-text="p.speed_limit_kbps + ' KB/s'"></td>
+                    <td>
+                      <div class="flex items-center gap-2">
+                        <div class="progress-bar-bg flex-1">
+                          <div class="progress-bar-fill"
+                               :class="trafficPercent(p) > 90 ? 'fill-danger' : trafficPercent(p) > 70 ? 'fill-warn' : 'fill-ok'"
+                               :style="'width:' + Math.min(trafficPercent(p), 100) + '%'"></div>
+                        </div>
+                        <span class="text-xs text-gray-500 whitespace-nowrap"
+                              x-text="formatBytes(p.traffic_used_bytes) + ' / ' + p.traffic_limit_mb + ' MB'"></span>
+                      </div>
+                    </td>
+                    <td class="text-sm" x-text="formatSpeed(p.current_speed_bps)"></td>
+                    <td>
+                      <span class="status-badge" :class="statusBadge(p).cls" x-text="statusBadge(p).text"></span>
+                    </td>
+                    <td class="space-x-1">
+                      <template x-if="p.status === 'active'">
+                        <button class="btn btn-danger btn-sm" @click="stopProxy(p)">停用</button>
+                      </template>
+                      <template x-if="p.status === 'stopped_by_admin'">
+                        <button class="btn btn-success btn-sm" @click="startProxy(p)">启用</button>
+                      </template>
+                      <button class="btn btn-danger btn-sm" @click="deleteProxy(p)">删除</button>
+                    </td>
+                  </tr>
+                </template>
+                <tr x-show="filteredProxies.length === 0">
+                  <td colspan="10" class="text-center text-gray-400 py-8">暂无数据</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div x-show="tab === 'users'">
+          <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
+            <table>
+              <thead>
+                <tr class="bg-gray-50">
+                  <th>UID</th>
+                  <th>注册时间</th>
+                  <th>余额</th>
+                  <th>累计充值</th>
+                  <th>当前连接数</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="u in users" :key="u.uid">
+                  <tr>
+                    <td class="font-mono text-sm" x-text="u.uid"></td>
+                    <td class="text-sm" x-text="new Date(u.created_at).toLocaleString('zh-CN')"></td>
+                    <td class="text-sm font-medium" x-text="u.balance_mb + ' MB'"></td>
+                    <td class="text-sm" x-text="u.total_recharged_mb + ' MB'"></td>
+                    <td class="text-sm" x-text="u.connection_count"></td>
+                  </tr>
+                </template>
+                <tr x-show="users.length === 0">
+                  <td colspan="5" class="text-center text-gray-400 py-8">暂无用户</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script>
+    function adminApp() {
+      return {
+        loggedIn: false,
+        loginForm: { username: '', password: '' },
+        loginError: '',
+        loggingIn: false,
+        tab: 'proxies',
+        proxies: [],
+        users: [],
+        filterUid: '',
+        filterStatus: '',
+        pollTimer: null,
+
+        async init() {
+          this.loggedIn = false;
+        },
+
+        async login() {
+          this.loginError = '';
+          this.loggingIn = true;
+          try {
+            const res = await fetch('/api/admin/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.loginForm)
+            });
+            if (!res.ok) {
+              const data = await res.json();
+              this.loginError = data.detail || '登录失败';
+              return;
+            }
+            this.loggedIn = true;
+            this.pollTimer = setInterval(() => this.refresh(), 3000);
+            await this.refresh();
+          } finally {
+            this.loggingIn = false;
+          }
+        },
+
+        async logout() {
+          await fetch('/api/admin/logout', { method: 'POST' });
+          this.loggedIn = false;
+          if (this.pollTimer) clearInterval(this.pollTimer);
+        },
+
+        async refresh() {
+          if (this.tab === 'proxies') await this.loadProxies();
+          if (this.tab === 'users') await this.loadUsers();
+        },
+
+        async loadProxies() {
+          const res = await fetch('/api/admin/proxies');
+          if (res.status === 401) { this.loggedIn = false; return; }
+          const data = await res.json();
+          this.proxies = data.proxies || [];
+        },
+
+        async loadUsers() {
+          const res = await fetch('/api/admin/users');
+          if (res.status === 401) { this.loggedIn = false; return; }
+          const data = await res.json();
+          this.users = data.users || [];
+        },
+
+        get filteredProxies() {
+          return this.proxies.filter(p => {
+            if (this.filterUid && !p.uid.includes(this.filterUid)) return false;
+            if (this.filterStatus && p.status !== this.filterStatus) return false;
+            return true;
+          });
+        },
+
+        async stopProxy(p) {
+          await fetch('/api/admin/proxies/' + p.id + '/stop', { method: 'POST' });
+          await this.loadProxies();
+          toast('已停用');
+        },
+
+        async startProxy(p) {
+          await fetch('/api/admin/proxies/' + p.id + '/start', { method: 'POST' });
+          await this.loadProxies();
+          toast('已启用');
+        },
+
+        async deleteProxy(p) {
+          if (!confirm('确定删除 "' + p.name + '"？端口将被释放。')) return;
+          await fetch('/api/admin/proxies/' + p.id, { method: 'DELETE' });
+          await this.loadProxies();
+          toast('已删除');
+        },
+
+        trafficPercent(p) {
+          if (!p.traffic_limit_mb) return 0;
+          return (p.traffic_used_bytes / (p.traffic_limit_mb * 1024 * 1024)) * 100;
+        }
+      };
+    }
+  </script>
+</body>
+</html>
