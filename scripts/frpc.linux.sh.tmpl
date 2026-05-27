@@ -1,0 +1,47 @@
+#!/bin/bash
+set -e
+
+echo "=== frpc 启动脚本 ==="
+read -p "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: " PORT
+PORT=${PORT:-{{DEFAULT_LOCAL_PORT}}}
+FRP_VERSION="{{FRP_VERSION}}"
+FRP_VERSION_NOV=${FRP_VERSION#v}
+
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  *) echo "不支持的架构: $ARCH"; exit 1 ;;
+esac
+
+OS=linux
+
+if [ ! -f frpc ]; then
+  echo "下载 frpc ${FRP_VERSION}..."
+  rm -rf frp_tmp
+  curl -L -o /tmp/frp.tar.gz "https://github.com/fatedier/frp/releases/download/${FRP_VERSION}/frp_${FRP_VERSION_NOV}_${OS}_${ARCH}.tar.gz"
+  mkdir -p frp_tmp
+  tar xzf /tmp/frp.tar.gz -C frp_tmp
+  mv frp_tmp/*/frpc ./frpc
+  chmod +x frpc
+  rm -rf frp_tmp
+  rm -f /tmp/frp.tar.gz
+fi
+
+cat > frpc.toml <<EOF
+serverAddr = "{{SERVER_HOST}}"
+serverPort = {{SERVER_PORT}}
+
+auth.method = "token"
+auth.token = "{{TOKEN}}"
+
+[[proxies]]
+name = "{{PROXY_NAME}}"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = ${PORT}
+remotePort = {{REMOTE_PORT}}
+EOF
+
+echo "启动 frpc, 公网端口 {{REMOTE_PORT}}, 本地端口 ${PORT}"
+./frpc -c frpc.toml

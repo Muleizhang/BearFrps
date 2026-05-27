@@ -1,0 +1,34 @@
+Write-Host "=== frpc 启动脚本 ==="
+$portInput = Read-Host "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]"
+if ([string]::IsNullOrWhiteSpace($portInput)) { $port = {{DEFAULT_LOCAL_PORT}} } else { $port = $portInput }
+$frpVersion = "{{FRP_VERSION}}"
+$frpVersionNoV = $frpVersion -replace '^v', ''
+
+if (-not (Test-Path "frpc.exe")) {
+    Write-Host "下载 frpc $frpVersion..."
+    Invoke-WebRequest -Uri "https://github.com/fatedier/frp/releases/download/$frpVersion/frp_${frpVersionNoV}_windows_amd64.zip" -OutFile "frp.zip"
+    Remove-Item -Recurse -Force "frp_tmp" -ErrorAction SilentlyContinue
+    Expand-Archive "frp.zip" -DestinationPath "frp_tmp" -Force
+    $frpcPath = Get-ChildItem -Path "frp_tmp" -Recurse -Filter "frpc.exe" | Select-Object -First 1
+    if (-not $frpcPath) { throw "未找到 frpc.exe" }
+    Copy-Item $frpcPath.FullName ".\frpc.exe"
+    Remove-Item -Recurse -Force "frp_tmp", "frp.zip"
+}
+
+@"
+serverAddr = "{{SERVER_HOST}}"
+serverPort = {{SERVER_PORT}}
+
+auth.method = "token"
+auth.token = "{{TOKEN}}"
+
+[[proxies]]
+name = "{{PROXY_NAME}}"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = $port
+remotePort = {{REMOTE_PORT}}
+"@ | Set-Content -Encoding UTF8 frpc.toml
+
+Write-Host "启动 frpc, 公网端口 {{REMOTE_PORT}}, 本地端口 $port"
+.\frpc.exe -c frpc.toml

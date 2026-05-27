@@ -1,0 +1,25 @@
+Write-Host "=== Demo 留言板服务启动脚本 ==="
+$portInput = Read-Host "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]"
+if ([string]::IsNullOrWhiteSpace($portInput)) { $port = {{DEFAULT_LOCAL_PORT}} } else { $port = $portInput }
+
+$python = Get-Command python -ErrorAction SilentlyContinue
+$pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+
+if ($python -or $pyLauncher) {
+    Write-Host "使用 Python 版"
+    if (-not (Test-Path "demo_server.py")) {
+        Invoke-WebRequest -Uri "{{DEMO_BIN_BASE_URL}}/demo_server.py" -OutFile "demo_server.py"
+    }
+    if ($python) {
+        python demo_server.py --port $port
+    } else {
+        py -3 demo_server.py --port $port
+    }
+    exit $LASTEXITCODE
+}
+
+Write-Host "未找到 Python，使用预编译 Go 兜底版"
+if (-not (Test-Path "demo-server.exe")) {
+    Invoke-WebRequest -Uri "{{DEMO_BIN_BASE_URL}}/demo-server-windows-amd64.exe" -OutFile "demo-server.exe"
+}
+.\demo-server.exe --port $port

@@ -1,0 +1,30 @@
+#!/bin/bash
+set -e
+
+echo "=== Demo 留言板服务启动脚本 ==="
+read -p "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: " PORT
+PORT=${PORT:-{{DEFAULT_LOCAL_PORT}}}
+
+if command -v python3 >/dev/null 2>&1; then
+  echo "使用 Python 版"
+  if [ ! -f demo_server.py ]; then
+    curl -fsSL -o demo_server.py "{{DEMO_BIN_BASE_URL}}/demo_server.py"
+  fi
+  python3 demo_server.py --port "$PORT"
+  exit $?
+fi
+
+echo "未找到 Python3，使用预编译 Go 兜底版"
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  *) echo "不支持的架构: $ARCH"; exit 1 ;;
+esac
+
+if [ ! -f demo-server ]; then
+  curl -fsSL -o demo-server "{{DEMO_BIN_BASE_URL}}/demo-server-darwin-${ARCH}"
+  chmod +x demo-server
+fi
+
+./demo-server --port "$PORT"
