@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import ROOT_DIR
@@ -76,3 +76,20 @@ async def admin_page():
 @app.get("/show")
 async def show_page():
     return _html_file("frontend/show.html", "show page is not ready")
+
+
+@app.get("/shared.css")
+async def shared_css():
+    path = ROOT_DIR / "frontend/shared.css"
+    if path.exists():
+        return FileResponse(path, media_type="text/css")
+    return Response("/* shared.css is not ready */", media_type="text/css", status_code=404)
+
+
+@app.get("/mock_api.js")
+async def mock_api_js():
+    path = ROOT_DIR / "frontend/mock_api.js"
+    if not path.exists():
+        return Response("// mock_api.js is not ready\n", media_type="application/javascript", status_code=404)
+    text = path.read_text(encoding="utf-8").replace("window.USE_MOCK = true;", "window.USE_MOCK = false;", 1)
+    return Response(text, media_type="application/javascript")
