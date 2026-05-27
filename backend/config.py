@@ -23,8 +23,10 @@ class Settings(BaseModel):
     frps_auth_token: str = "bearfrps-internal"
 
     plugin_path: str = "/frps-plugin"
-    remote_port_range_start: int = 50000
-    remote_port_range_end: int = 50100
+    remote_port_range_start: int = 1
+    remote_port_range_end: int = 65535
+    allocatable_port_range_start: int = 50000
+    allocatable_port_range_end: int = 50100
     default_local_port: int = 9527
 
     free_recharge_amount_mb: int = 100
@@ -66,6 +68,12 @@ def get_settings() -> Settings:
             "REMOTE_PORT_RANGE_START", defaults.remote_port_range_start
         ),
         remote_port_range_end=_env_int("REMOTE_PORT_RANGE_END", defaults.remote_port_range_end),
+        allocatable_port_range_start=_env_int(
+            "ALLOCATABLE_PORT_RANGE_START", defaults.allocatable_port_range_start
+        ),
+        allocatable_port_range_end=_env_int(
+            "ALLOCATABLE_PORT_RANGE_END", defaults.allocatable_port_range_end
+        ),
         default_local_port=_env_int("DEFAULT_LOCAL_PORT", defaults.default_local_port),
         free_recharge_amount_mb=_env_int(
             "FREE_RECHARGE_AMOUNT_MB", defaults.free_recharge_amount_mb

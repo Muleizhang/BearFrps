@@ -47,6 +47,8 @@
   }
 
   let adminSession = false;
+  let mockAllocatableStart = 50000;
+  let mockAllocatableEnd = 50100;
 
   function makeFrpcConfig(proxy) {
     return 'serverAddr = "' + window.MOCK_SERVER_HOST + '"\n'
@@ -307,6 +309,38 @@
       return { status: 200, body: { ok: true } };
     },
 
+    "GET /api/admin/config": function () {
+      if (!adminSession) return { status: 401, body: { detail: "Unauthorized" } };
+      var proxies = loadProxies();
+      var allocated = proxies.filter(function (p) { return p.status !== "deleted"; }).length;
+      return {
+        status: 200,
+        body: {
+          allocatable_port_range_start: mockAllocatableStart,
+          allocatable_port_range_end: mockAllocatableEnd,
+          available_port_count: (mockAllocatableEnd - mockAllocatableStart + 1) - allocated
+        }
+      };
+    },
+
+    "PUT /api/admin/config": function (body) {
+      if (!adminSession) return { status: 401, body: { detail: "Unauthorized" } };
+      var start = Number(body.start);
+      var end = Number(body.end);
+      if (start < 1 || end > 65535) return { status: 400, body: { detail: "端口范围必须在 1-65535 之间" } };
+      if (start > end) return { status: 400, body: { detail: "起始端口不能大于结束端口" } };
+      var proxies = loadProxies();
+      for (var i = 0; i < proxies.length; i++) {
+        var p = proxies[i];
+        if (p.status !== "deleted" && (p.frps_remote_port < start || p.frps_remote_port > end)) {
+          return { status: 400, body: { detail: "新区间不覆盖已分配端口: [" + p.frps_remote_port + "]" } };
+        }
+      }
+      mockAllocatableStart = start;
+      mockAllocatableEnd = end;
+      return { status: 200, body: { ok: true } };
+    },
+
     "GET /api/show/online": function () {
       refreshOnlineStatus();
       var proxies = loadProxies().filter(function (p) {
@@ -380,6 +414,12 @@
     }
     if (method === "GET" && path === "/api/admin/users") {
       return mockResponse(routes["GET /api/admin/users"]());
+    }
+    if (method === "GET" && path === "/api/admin/config") {
+      return mockResponse(routes["GET /api/admin/config"]());
+    }
+    if (method === "PUT" && path === "/api/admin/config") {
+      return mockResponse(routes["PUT /api/admin/config"](body));
     }
     if (method === "GET" && path === "/api/show/online") {
       return mockResponse(routes["GET /api/show/online"]());

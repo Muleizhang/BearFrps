@@ -10,9 +10,8 @@ from backend.auth import (
     create_admin_session,
     require_admin,
 )
-from backend.deps import port_pool
+from backend.deps import persist_port_range, port_pool, settings
 from backend.models import ProxyStatus, store
-from backend.deps import settings
 
 
 router = APIRouter(prefix="/api/admin")
@@ -21,6 +20,11 @@ router = APIRouter(prefix="/api/admin")
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class UpdateAllocatableRangeRequest(BaseModel):
+    start: int
+    end: int
 
 
 @router.post("/login")
@@ -34,6 +38,42 @@ async def login(body: LoginRequest, response: Response) -> dict[str, bool]:
 @router.post("/logout")
 async def logout(request: Request, response: Response) -> dict[str, bool]:
     clear_admin_session(response, request.cookies.get(ADMIN_SESSION_COOKIE))
+    return {"ok": True}
+
+
+@router.get("/config", dependencies=[Depends(require_admin)])
+async def get_config() -> dict[str, int]:
+    start, end = port_pool.get_range()
+    return {
+        "allocatable_port_range_start": start,
+        "allocatable_port_range_end": end,
+        "available_port_count": port_pool.available_count(),
+    }
+
+
+@router.put("/config", dependencies=[Depends(require_admin)])
+async def update_config(body: UpdateAllocatableRangeRequest) -> dict[str, bool]:
+    if body.start < 1 or body.end > 65535:
+        raise HTTPException(status_code=400, detail="端口范围必须在 1-65535 之间")
+    if body.start > body.end:
+        raise HTTPException(status_code=400, detail="起始端口不能大于结束端口")
+    async with store.lock:
+        currently_allocated = {
+            p.frps_remote_port
+            for p in store.proxies.values()
+            if p.status != ProxyStatus.DELETED
+        }
+        outside = {
+            p for p in currently_allocated
+            if p < body.start or p > body.end
+        }
+        if outside:
+            raise HTTPException(
+                status_code=400,
+                detail=f"新区间不覆盖已分配端口: {sorted(outside)}",
+            )
+        port_pool.update_range(body.start, body.end, currently_allocated)
+    persist_port_range(body.start, body.end)
     return {"ok": True}
 
 

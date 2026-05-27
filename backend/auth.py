@@ -6,7 +6,6 @@ from typing import Annotated
 
 from fastapi import Cookie, Depends, HTTPException, Request, Response
 
-from backend.config import Settings
 from backend.deps import settings
 from backend.models import User, store
 
@@ -55,14 +54,13 @@ def clear_admin_session(response: Response, session_id: str | None) -> None:
 
 async def require_admin(
     request: Request,
-    cfg: Settings = settings,
 ) -> None:
     session_id = request.cookies.get(ADMIN_SESSION_COOKIE)
     if not session_id or session_id not in _admin_sessions:
         raise HTTPException(status_code=401, detail="admin login required")
 
 
-def check_admin_credentials(username: str, password: str, cfg: Settings = settings) -> bool:
-    return secrets.compare_digest(username, cfg.admin_username) and secrets.compare_digest(
-        password, cfg.admin_password
+def check_admin_credentials(username: str, password: str) -> bool:
+    return secrets.compare_digest(username, settings.admin_username) and secrets.compare_digest(
+        password, settings.admin_password
     )

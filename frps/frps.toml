@@ -12,7 +12,7 @@ auth.token = "bearfrps-internal"
 transport.heartbeatTimeout = 15
 maxPortsPerClient = 1
 allowPorts = [
-  { start = 50000, end = 50100 }
+  { start = 1, end = 65535 }
 ]
 
 log.to = "console"
