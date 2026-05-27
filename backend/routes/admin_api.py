@@ -12,6 +12,7 @@ from backend.auth import (
 )
 from backend.deps import port_pool
 from backend.models import ProxyStatus, store
+from backend.deps import settings
 
 
 router = APIRouter(prefix="/api/admin")
@@ -43,6 +44,9 @@ async def list_admin_proxies() -> dict[str, list[dict[str, object]]]:
             store.admin_proxy_to_dto(proxy)
             for proxy in sorted(store.proxies.values(), key=lambda p: p.id)
         ]
+    host = settings.server_public_host
+    for p in proxies:
+        p["public_url"] = f"http://{host}:{p['frps_remote_port']}/"
     return {"proxies": proxies}
 
 

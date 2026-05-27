@@ -203,13 +203,19 @@ echo "=== Demo 留言板服务启动脚本 ==="
 printf "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: "
 read PORT
 PORT=${PORT:-{{DEFAULT_LOCAL_PORT}}}
+printf "昵称 [默认 留言板]: "
+read NICKNAME
+NICKNAME=${NICKNAME:-留言板}
+printf "留言 [默认 这是一个临时留言板]: "
+read MESSAGE
+MESSAGE=${MESSAGE:-这是一个临时留言板}
 
 if command -v python3 >/dev/null 2>&1; then
   echo "使用 Python 版"
   if [ ! -f demo_server.py ]; then
     curl -fsSL -o demo_server.py "{{DEMO_BIN_BASE_URL}}/demo_server.py"
   fi
-  python3 demo_server.py --port "$PORT"
+  python3 demo_server.py --port "$PORT" --nickname "$NICKNAME" --message "$MESSAGE"
   exit $?
 fi
 
@@ -226,13 +232,17 @@ if [ ! -f demo-server ]; then
   chmod +x demo-server
 fi
 
-./demo-server --port "$PORT"
+./demo-server --port "$PORT" --nickname "$NICKNAME" --message "$MESSAGE"
 """
 
 
 DEMO_WINDOWS_FALLBACK = r"""Write-Host "=== Demo 留言板服务启动脚本 ==="
 $portInput = Read-Host "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]"
 if ([string]::IsNullOrWhiteSpace($portInput)) { $port = {{DEFAULT_LOCAL_PORT}} } else { $port = $portInput }
+$nicknameInput = Read-Host "昵称 [默认 留言板]"
+if ([string]::IsNullOrWhiteSpace($nicknameInput)) { $nickname = "留言板" } else { $nickname = $nicknameInput }
+$messageInput = Read-Host "留言 [默认 这是一个临时留言板]"
+if ([string]::IsNullOrWhiteSpace($messageInput)) { $message = "这是一个临时留言板" } else { $message = $messageInput }
 
 $python = Get-Command python -ErrorAction SilentlyContinue
 $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
@@ -243,9 +253,9 @@ if ($python -or $pyLauncher) {
         Invoke-WebRequest -Uri "{{DEMO_BIN_BASE_URL}}/demo_server.py" -OutFile "demo_server.py"
     }
     if ($python) {
-        python demo_server.py --port $port
+        python demo_server.py --port $port --nickname $nickname --message $message
     } else {
-        py -3 demo_server.py --port $port
+        py -3 demo_server.py --port $port --nickname $nickname --message $message
     }
     exit $LASTEXITCODE
 }
@@ -256,7 +266,7 @@ if (-not (Test-Path "demo-server.exe")) {
 }
 
 Unblock-File ".\demo-server.exe" -ErrorAction SilentlyContinue
-.\demo-server.exe --port $port
+.\demo-server.exe --port $port --nickname $nickname --message $message
 """
 
 

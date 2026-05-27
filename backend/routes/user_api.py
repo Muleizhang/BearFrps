@@ -9,6 +9,11 @@ from backend.models import Proxy, ProxyStatus, User, new_token, store
 from backend.script_renderer import script_renderer
 
 
+def _add_public_url(dto: dict[str, object]) -> dict[str, object]:
+    dto["public_url"] = f"http://{settings.server_public_host}:{dto['frps_remote_port']}/"
+    return dto
+
+
 router = APIRouter()
 
 
@@ -45,7 +50,7 @@ async def recharge(user: User = Depends(get_or_create_user)) -> dict[str, int]:
 async def list_proxies(user: User = Depends(get_or_create_user)) -> dict[str, list[dict[str, object]]]:
     async with store.lock:
         proxies = [
-            store.proxy_to_dto(proxy)
+            _add_public_url(store.proxy_to_dto(proxy))
             for proxy in sorted(store.proxies.values(), key=lambda p: p.id)
             if proxy.uid == user.uid
         ]
@@ -87,7 +92,8 @@ async def create_proxy(
             traffic_limit_mb=body.traffic_mb,
         )
         store.proxies[proxy.id] = proxy
-        dto = store.proxy_to_dto(proxy)
+        dto = _add_public_url(store.proxy_to_dto(proxy))
+        store.proxies[proxy.id] = proxy
 
     response.set_cookie("uid", user.uid, httponly=False, samesite="lax", max_age=60 * 60 * 24 * 365)
     return _proxy_scripts_response(proxy, dto)
@@ -113,7 +119,7 @@ async def get_proxy_scripts(proxy_id: int, user: User = Depends(get_or_create_us
         proxy = store.proxies.get(proxy_id)
         if proxy is None or proxy.uid != user.uid:
             raise HTTPException(status_code=404, detail="proxy not found")
-        dto = store.proxy_to_dto(proxy)
+        dto = _add_public_url(store.proxy_to_dto(proxy))
     return _proxy_scripts_response(proxy, dto)
 
 

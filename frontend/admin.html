@@ -92,7 +92,13 @@
                   <tr :class="statusClass(p)">
                     <td class="font-mono text-xs" x-text="p.uid"></td>
                     <td class="font-medium" x-text="p.name"></td>
-                    <td class="font-mono text-sm" x-text="p.frps_remote_port"></td>
+                    <td class="font-mono text-sm">
+                      <a :href="p.public_url" target="_blank" rel="noopener"
+                         class="text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                         x-show="p.public_url"
+                         x-text="p.frps_remote_port"></a>
+                      <span x-show="!p.public_url" x-text="p.frps_remote_port"></span>
+                    </td>
                     <td class="font-mono text-xs text-gray-500 max-w-[120px] truncate" x-text="p.token" :title="p.token"></td>
                     <td class="font-mono text-sm" x-text="p.actual_local_port != null ? p.actual_local_port : '-'"></td>
                     <td class="text-sm" x-text="p.speed_limit_kbps + ' KB/s'"></td>
