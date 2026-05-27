@@ -2,7 +2,8 @@
 set -e
 
 echo "=== frpc 启动脚本 ==="
-read -p "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: " PORT
+printf "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: "
+read PORT
 PORT=${PORT:-{{DEFAULT_LOCAL_PORT}}}
 FRP_VERSION="{{FRP_VERSION}}"
 FRP_VERSION_NOV=${FRP_VERSION#v}
