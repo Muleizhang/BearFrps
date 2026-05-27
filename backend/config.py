@@ -25,7 +25,7 @@ class Settings(BaseModel):
     plugin_path: str = "/frps-plugin"
     remote_port_range_start: int = 50000
     remote_port_range_end: int = 50100
-    default_local_port: int = 527
+    default_local_port: int = 9527
 
     free_recharge_amount_mb: int = 100
     default_speed_limit_kbps: int = 1024

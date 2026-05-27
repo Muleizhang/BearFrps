@@ -104,7 +104,8 @@ FRPC_UNIX_FALLBACK = r"""#!/bin/bash
 set -e
 
 echo "=== frpc 启动脚本 ==="
-read -p "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: " PORT
+printf "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: "
+read PORT
 PORT=${PORT:-{{DEFAULT_LOCAL_PORT}}}
 FRP_VERSION="{{FRP_VERSION}}"
 FRP_VERSION_NOV=${FRP_VERSION#v}
@@ -197,7 +198,8 @@ DEMO_UNIX_FALLBACK = r"""#!/bin/bash
 set -e
 
 echo "=== Demo 留言板服务启动脚本 ==="
-read -p "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: " PORT
+printf "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: "
+read PORT
 PORT=${PORT:-{{DEFAULT_LOCAL_PORT}}}
 
 if command -v python3 >/dev/null 2>&1; then
