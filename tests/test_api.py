@@ -1,3 +1,153 @@
+"""@file tests/test_api.py
+@brief 验证用户端、管理端、展示页、端口池和脚本生成的主要业务流程。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：FastAPI TestClient、backend.main.app、backend.models。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和测试覆盖说明。
+  用户注册、登录、注销、旧 UID 迁移和用户持久化。
+  TCP 单端口、多端口、自动端口、端口冲突和范围释放。
+  HTTP 代理、子域名、高级配置和公开 URL。
+  STCP/XTCP 代理、visitor 脚本和 fallback 配置。
+  管理员登录、端口池调整、启停删除代理和用户列表。
+  展示页只返回 active 且 online 的代理。
+
+  所有接口返回预期状态码和关键字段。
+  创建代理后余额扣减、脚本包含必要 frpc 配置。
+  删除代理后端口可再次分配。
+
+  test_user_lifecycle_and_scripts 覆盖注册、初始化、充值、创建代理、脚本和删除。
+  test_create_tcp_auto_multiple_ports 覆盖自动连续端口分配和多 [[proxies]] 输出。
+  test_create_tcp_proxy_with_advanced_transport_config 覆盖加密、压缩和限速模式输出。
+  test_create_tcp_single_port_and_occupied_failure 覆盖指定端口占用冲突。
+  test_create_tcp_range_validation_and_release 覆盖范围端口、数量限制、本地端口溢出和释放。
+  test_create_http_proxy_and_scripts 覆盖 HTTP 公开 URL 和脚本返回。
+  test_create_http_proxy_with_advanced_config 覆盖 HTTP 认证、locations 和 host header。
+  test_create_xtcp_proxy_and_visitor_scripts 覆盖 XTCP 服务端与 visitor 配置。
+  test_create_xtcp_proxy_with_advanced_config 覆盖 XTCP fallback 设置。
+  test_create_proxy_advanced_config_validation_errors 覆盖高级配置非法输入。
+  test_user_auth_login_logout_and_persistence 覆盖账号持久化和会话清理。
+  test_invalid_uid_cookie_does_not_authenticate 覆盖旧 UID cookie 不再直接认证。
+  test_register_migrates_legacy_uid_data 覆盖匿名 UID 数据迁移到注册账号。
+  test_create_proxy_validation_errors 覆盖名称、余额、连接数和类型错误。
+  test_admin_auth_and_operations 覆盖管理员登录和代理状态操作。
+  test_show_online_only_returns_active_online 覆盖展示页过滤规则。
+  test_admin_config_get_and_update 覆盖端口池读取和扩大范围。
+  test_admin_config_update_rejects_invalid_range 覆盖非法端口范围。
+  test_admin_config_update_rejects_when_proxy_outside_new_range 覆盖已占用端口越界保护。
+  test_admin_port_range_ignores_http_proxies 覆盖 HTTP 代理不占用端口池。
+  test_port_pool_update_range 覆盖 PortPool 范围更新。
+  test_port_pool_batch_allocate_reserve_release 覆盖批量分配、预留和释放。
+  test_port_pool_skips_in_use_port 覆盖本机端口占用跳过逻辑。
+
+  关键接口必须断言 HTTP 状态码。
+  代理创建测试必须断言 DTO、frpc_config 和 scripts 三类返回。
+  端口相关测试必须断言具体端口值，避免只检查成功状态。
+  认证测试必须断言退出后接口变为 401。
+  展示页测试通过直接修改 Store 构造 online/offline 场景。
+
+  TestClient 使用 FastAPI lifespan，会加载模板和用户数据。
+  conftest 会把持久化文件重定向到 tmp_path。
+  所有测试结束后端口池恢复初始范围。
+
+  注册接口返回 uid、username 和余额字段。
+  未登录访问 /api/user/me 必须返回 401。
+  充值接口返回新的 balance_mb。
+  创建代理响应必须包含 proxy、frpc_config、scripts。
+  frpc_config 必须包含用户 token metadata。
+  TCP 响应必须包含 frps_remote_port 和 tcp_mappings。
+  HTTP 响应必须包含 public_url 或 public_urls。
+  XTCP/STCP 响应必须包含 visitor 配置。
+  删除代理响应固定为 {"ok": true}。
+  管理端登录失败不能创建 session。
+  管理端删除代理后端口池应释放相关端口。
+  展示页不能返回 stopped_by_admin 或 offline 代理。
+
+  TCP count 超过 max_tcp_ports_per_proxy 时拒绝。
+  remote_start_port 大于 remote_end_port 时拒绝。
+  local_start_port 映射后超过 65535 时拒绝。
+  已占用 remotePort 再次申请时拒绝。
+  用户余额不足时创建代理拒绝。
+  用户达到最大连接数时创建代理拒绝。
+  同一用户重复代理名拒绝。
+  非本人代理删除和脚本获取返回 404。
+  管理端端口池缩小不能覆盖 active TCP 代理。
+  HTTP 代理不影响端口池缩小。
+
+  用户注册后写入 users.json。
+  重启加载用户时补齐 frpc token 字段。
+  旧匿名 uid 数据可迁移到注册用户。
+  注销后 session 被清理但用户数据保留。
+  测试通过 monkeypatch 把持久化文件放到临时目录。
+
+  Linux/macOS/Windows frpc 脚本都应存在。
+  demo 脚本都应存在。
+  TCP 多端口配置应出现多个 [[proxies]]。
+  高级配置应输出 transport.useEncryption。
+  HTTP 高级配置应输出 basicAuth 或 locations。
+  visitor 配置应输出 bindPort 和 secretKey。
+  刷新脚本接口应返回与创建接口兼容的结构。
+
+  覆盖正常流程。
+  覆盖异常输入。
+  覆盖权限失败。
+  覆盖资源释放。
+  覆盖持久化迁移。
+  覆盖展示页过滤。
+  覆盖管理员操作。
+  覆盖端口池边界。
+  覆盖多代理类型。
+  覆盖脚本内容。
+  覆盖 frpc token 轮换后的 API 表现。
+  覆盖 mock 之外的真实 FastAPI 路由。
+
+  测试用例文档中的“用户生命周期”由本文件覆盖。
+  测试用例文档中的“代理创建”由本文件覆盖。
+  测试用例文档中的“管理员接口”由本文件覆盖。
+  测试用例文档中的“展示页”由本文件覆盖。
+  测试用例文档中的“端口池”由本文件覆盖。
+  测试结果可作为课程审计记录附件。
+
+  新增用户接口必须新增成功和失败测试。
+  新增代理字段必须断言 DTO 和脚本输出。
+  修改端口池规则必须补冲突和释放测试。
+  修改认证逻辑必须补 401/403 场景。
+  修改持久化结构必须补迁移测试。
+
+  本文件证明核心 HTTP API 可自动化验收。
+  TestClient 不需要真实监听端口。
+  临时文件保证测试不会污染课程提交数据。
+@section api_test_doxygen Doxygen 注释约束
+  测试文件头说明覆盖范围、断言策略和副作用。
+  新增接口测试应说明成功路径和失败路径。
+  端口池测试应说明分配、预留和释放规则。
+  认证测试应说明 session 和 cookie 行为。
+  持久化测试应说明临时文件隔离方式。
+@section api_test_submission 平时作业提交检查
+  pytest 必须全部通过。
+  用户生命周期必须有测试。
+  管理员操作必须有测试。
+  展示页过滤必须有测试。
+  端口池边界必须有测试。
+  脚本生成必须有测试。
+  错误输入必须有测试。
+@section api_test_runtime 运行时约束
+  测试运行不需要真实 frps。
+  测试运行不需要公网服务器。
+  TestClient 会执行 FastAPI lifespan。
+  临时目录隔离用户持久化文件。
+  端口池在每个测试后重置。
+  session 在每个测试前清空。
+@section api_test_license 许可证和来源
+  测试代码属于 BearFrps 根项目。
+  根项目许可证为 Apache-2.0。
+  pytest 依赖记录在 SBOM.json。
+  测试结果用于课程质量证明。
+"""
+
 from __future__ import annotations
 
 import asyncio

@@ -1,4 +1,18 @@
 #!/bin/bash
+## @file scripts/demo.mac.sh.tmpl
+#  @brief macOS demo 留言板启动脚本模板，由后端渲染后交给用户复制运行。
+#  @author BearFrps课程设计小组
+#  @course 武汉大学开源软件与技术课程 2026
+#  @date 2026-06-10
+#  @version 1.0
+#  @copyright Apache-2.0
+#  @details
+#   依赖关系：bash、python3 或预编译 demo-server、curl。
+#   修改记录：2026-06-10，补充 Doxygen 风格文件头和脚本行为说明。
+#   读取用户希望监听的本地端口，默认使用平台配置的 demo 端口。
+#   优先使用 Python 版，便于用户检查源码。
+#   缺少 Python 时按 darwin/amd64 或 darwin/arm64 下载兜底二进制。
+#   该服务的留言数据保存在本地进程内，不上传到 BearFrps 后端。
 set -e
 
 echo "=== Demo 留言板服务启动脚本 ==="

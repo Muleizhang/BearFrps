@@ -1,3 +1,44 @@
+"""@file backend/poller.py
+@brief 定时读取 frps admin API，更新代理在线状态、流量、速度和停用条件。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：asyncio、FrpsClient、Store、用户持久化模块。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头、计费逻辑和副作用说明。
+  TCP 多端口代理按每个 frps_name 聚合流量，避免只统计首端口。
+  HTTP、STCP、XTCP 使用不同 frps admin API 列表，按代理类型更新在线状态。
+  当前速度由相邻两次累计流量差除以轮询间隔得到。
+  超过代理流量上限或用户余额不足时，代理状态置为 stopped_by_admin。
+  停用后不会立刻释放端口，释放由用户删除代理或管理员删除代理完成。
+
+  单轮轮询失败不终止后台任务，下一轮继续尝试，适合 frps 短暂不可用场景。
+  持久化用户失败不应影响内存状态更新，但测试会覆盖正常保存路径。
+  start 创建后台任务，并为 stop_event 建立异步退出信号。
+  stop 设置退出信号并等待任务结束，避免测试和应用关闭时遗留任务。
+  _run 按 interval_sec 循环执行 _poll_once。
+  _poll_once 依次读取 TCP、HTTP、STCP、XTCP 列表，再进入 store.lock 更新状态。
+  更新时先处理在线代理，再把未出现在 frps 列表中的 active 代理标记离线。
+
+  frps 返回的 todayTrafficIn/todayTrafficOut 是累计值。
+  本平台把入站和出站相加作为代理总用量。
+  当前速度用本轮累计值减去上一轮累计值，再除以时间差。
+  TCP 多映射代理需要把所有 mapping 的 frps_name 用量相加。
+  STCP/XTCP fallback TCP 用量计入对应 P2P 代理。
+
+  已用流量达到 traffic_limit_mb 时停用代理。
+  用户 balance_mb 小于等于 0 时停用代理。
+  已删除代理不再被轮询器恢复为 online。
+  管理员停用代理不会释放端口，避免旧脚本端口被其他用户占用。
+
+  actual_local_port 来自 frps 观察到的 localPort，可能与脚本默认值不同。
+  last_seen_at 在代理在线时刷新，用于前端展示最后活动时间。
+  is_online 只表达 frps 当前观察到的连接状态，不表达权限状态。
+  current_speed_bps 在代理离线或未变化时回落为 0。
+"""
+
 from __future__ import annotations
 
 import asyncio

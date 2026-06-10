@@ -1,3 +1,17 @@
+## @file scripts/frpc.win.ps1.tmpl
+#  @brief Windows PowerShell frpc 启动脚本模板，下载官方 frpc 并写入 frpc.toml。
+#  @author BearFrps课程设计小组
+#  @course 武汉大学开源软件与技术课程 2026
+#  @date 2026-06-10
+#  @version 1.0
+#  @copyright Apache-2.0
+#  @details
+#   依赖关系：PowerShell、Invoke-WebRequest、Expand-Archive、官方 frp release。
+#   修改记录：2026-06-10，补充 Doxygen 风格文件头和安全注意事项。
+#   frpc.toml 包含用户令牌，用户不应公开分享。
+#   Unblock-File 用于解除 Windows 下载文件阻止标记，避免无法启动。
+#   remotePort、metadatas.uid 和 metadatas.token 由后端生成，不能随意修改。
+#   脚本只下载 frpc.exe，不安装系统服务。
 Write-Host "=== frpc 启动脚本 ==="
 $frpVersion = "{{FRP_VERSION}}"
 $frpVersionNoV = $frpVersion -replace '^v', ''

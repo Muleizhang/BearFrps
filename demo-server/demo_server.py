@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+"""@file demo-server/demo_server.py
+@brief 提供无需额外依赖的本地留言板，用于验证 frpc 内网穿透访问。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：Python 标准库 argparse、json、http.server、time、random。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和 demo 服务说明。
+  用户生成 demo 脚本后可在本地启动该服务，再通过 frpc 暴露到公网。
+  留言数据只保存在当前进程内，不上传到 BearFrps 后端。
+  页面颜色从固定调色板随机选择，便于展示页区分不同用户的 demo 服务。
+  nickname 和 message 作为默认表单内容，降低课堂演示输入成本。
+  GET / 返回 HTML 页面。
+  GET /api/messages 返回留言 JSON。
+  POST /api/messages 新增留言，输入过长会被截断以保护页面展示。
+"""
+
 import argparse
 import json
 import random

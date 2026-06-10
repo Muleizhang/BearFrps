@@ -1,3 +1,18 @@
+"""@file backend/persist_config.py
+@brief 保存和加载管理员配置的可分配公网端口范围。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：json、pathlib、backend.config.ROOT_DIR。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和异常处理说明。
+  端口池范围保存在 config/allocatable_range.json，使管理员调整在重启后仍然生效。
+  读取失败或文件格式错误时回退默认值，保证课堂演示环境可以继续启动。
+  保存时只写 start/end 两个字段，不保存已分配端口，已分配端口仍由 Store 中代理记录决定。
+"""
+
 from __future__ import annotations
 
 import json

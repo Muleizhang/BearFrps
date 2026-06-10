@@ -1,3 +1,54 @@
+"""@file backend/plugin_handler.py
+@brief 处理 frps Login、NewProxy、CloseProxy、Ping 回调并执行多租户鉴权。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：FastAPI APIRouter、backend.models、backend.deps.settings。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头、鉴权规则和兼容逻辑说明。
+  Login 使用用户级 metadatas.token 找到 User，并重写 content.user 与 metas。
+  NewProxy 按代理类型校验 remotePort、subdomain、serverName 或 fallback 代理名。
+  Ping 校验 uid 和 token_version，用户轮换令牌后旧 frpc 会被拒绝。
+  CloseProxy 只更新在线状态和 last_seen_at，不删除代理记录。
+  旧版本配置可能仍使用 per-proxy token，本模块保留 find_proxy_by_token fallback。
+  frp 官方 v0.58.1 要求 frpc auth.token 与 frps auth.token 匹配，因此租户令牌放在 metadatas.token。
+  插件返回 reject reason 会给 frps 日志使用，避免暴露敏感 token。
+  会修改代理在线状态、最后上线时间，以及 Login content 中的用户和 metas。
+  frps_plugin 是唯一公开插件入口，op 可来自 JSON payload 或查询参数。
+  未识别的 op 默认 allow，避免 frps 新增事件导致课堂演示连接全部失败。
+  _handle_login 只负责认证用户和改写 content，不绑定具体代理端口。
+  _handle_new_proxy 负责把 frps 准备创建的代理和平台记录逐项比对。
+  _handle_close_proxy 是幂等操作，重复 close 不应改变代理归属和配额。
+  _handle_ping 是轮换令牌后的关键防线，旧配置会在下一次 ping 被拒绝。
+
+  privilege_key 是 frp token 认证字段，使用 shared auth.token 计算。
+  metadatas.token 是 BearFrps 用户级令牌，作为租户身份。
+  metadatas.uid 是前端用户 uid，必须和令牌推导出的用户一致。
+  metas.token_version 是 Login 后写入的版本号，用于后续 Ping 校验。
+  remotePort 只对 TCP 和 fallback TCP 有意义。
+  subdomain/customDomains 只对 HTTP 代理有意义。
+
+  用户不存在或令牌错误，拒绝 Login。
+  用户余额小于等于 0，拒绝 Login。
+  用户没有 active 代理，拒绝 Login。
+  代理被管理员停用或删除，拒绝 NewProxy。
+  TCP remotePort 与平台记录不一致，拒绝 NewProxy。
+  HTTP subdomain 与平台记录不一致，拒绝 NewProxy。
+  Ping 中 uid 不匹配或 token_version 过期，拒绝继续连接。
+
+  _find_user_by_raw_token_unlocked 优先查用户级令牌。
+  历史配置的 per-proxy token 仍可映射到 proxy.uid。
+  _find_user_by_privilege_key_unlocked 兼容旧脚本把代理 token 放入 auth.token 的情况。
+  兼容路径只用于平滑升级，新脚本应使用 metadatas.token。
+
+  插件只相信后端 Store 中的代理记录，不相信 frpc 自报的代理名或端口。
+  reject reason 不包含 token 明文。
+  Login 改写 user 字段后，后续事件可以用 uid 做快速归属校验。
+  token_version 以字符串写入 metas，是为了兼容 frp 元数据字段的字符串表达。
+"""
+
 from __future__ import annotations
 
 import hashlib

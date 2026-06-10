@@ -1,3 +1,23 @@
+"""@file backend/config.py
+@brief 集中定义后端、frps、端口池、计费和管理员账号的环境变量配置。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：python-dotenv、pydantic BaseModel、标准库 pathlib/os。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和配置字段说明。
+  所有部署相关默认值都集中在 Settings，路由和业务模块不得硬编码端口。
+  .env 只覆盖非空环境变量，空字符串会回退到默认值，减少课堂演示误配置。
+  frps_auth_token 是 frps 内部控制通道令牌，不等同于用户级 frpc_token。
+  allocatable_port_range_* 是平台可分配公网端口池，不包含用户本地端口。
+  max_tcp_ports_per_proxy 限制单个 TCP 代理可申请的映射数量，避免占满端口池。
+
+  get_settings 会读取项目根目录 .env，并通过 lru_cache 保持进程内单例。
+  测试若需要替换配置，应在导入依赖前调整环境或使用专门 fixture。
+"""
+
 from __future__ import annotations
 
 import os

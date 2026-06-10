@@ -1,3 +1,27 @@
+"""@file backend/auth.py
+@brief 处理用户注册、登录、密码哈希、会话 cookie、管理员认证和兼容旧 UID。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：FastAPI 请求/响应对象、backend.models 用户仓库、用户持久化模块。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和认证业务说明。
+  normalize_username：统一用户名格式，避免同一用户大小写重复注册。
+  validate_password：校验密码最小长度，失败时抛出 HTTP 400。
+  hash_password / verify_password：用 PBKDF2-HMAC 保存密码哈希，不保存明文密码。
+  get_or_create_user / require_user：解析 cookie 会话并返回当前用户。
+  register_user_unlocked：在调用方已持有 store.lock 时创建用户。
+  create_admin_session / require_admin：维护管理员 session cookie。
+
+  用户 session 存在内存中，课程展示场景下服务重启会清空会话。
+  注册用户资料会写入 config/users.json，便于重启后保留账号和 frpc 令牌。
+  旧版匿名 UID cookie 只用于迁移历史演示数据，不作为长期认证方式。
+  密码校验使用 hmac.compare_digest，避免简单字符串比较带来的时序差异。
+  所有修改 store 的函数都要求外层持有锁或通过路由层同步控制。
+"""
+
 from __future__ import annotations
 
 import re

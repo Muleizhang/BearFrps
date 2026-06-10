@@ -1,3 +1,64 @@
+"""@file backend/models.py
+@brief 定义用户、代理、TCP 映射、充值记录和进程内 Store。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：pydantic、asyncio.Lock、标准库 datetime/secrets。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头、数据成员和仓库约束说明。
+  User.frpc_token 是用户级 frpc 元数据令牌，轮换后旧配置应被插件拒绝。
+  Proxy.token 保留为历史兼容字段，新配置优先使用用户级 frpc_token。
+  Proxy.frps_name 是实际传给 frps 的内部代理名，避免用户自定义名称冲突。
+  TcpMapping 保存单个本地端口到远程端口的映射，多端口 TCP 代理由列表表达。
+  traffic_used_bytes/current_speed_bps 由轮询器更新，不由前端直接写入。
+
+  Store 方法名带 unlocked 表示调用者必须已经持有 store.lock。
+  Store 是课堂演示用进程内仓库，不替代生产数据库。
+  删除代理使用状态标记，便于保留审计和避免展示页读取已删除对象。
+  DTO 方法负责隐藏内部字段，只输出前端需要的安全信息。
+
+  ProxyStatus.ACTIVE 表示代理可被 frps 插件接受。
+  ProxyStatus.STOPPED_BY_ADMIN 表示代理被流量、余额或管理员策略停用。
+  ProxyStatus.DELETED 表示逻辑删除，列表接口默认不再展示给普通用户。
+  ProxyType.TCP 用于公网端口转发，必须占用端口池 remotePort。
+  ProxyType.HTTP 用于虚拟主机或子域名访问，不占用 TCP 端口池。
+  ProxyType.STCP 和 ProxyType.XTCP 用于点对点场景，需要 visitor 配置。
+  TcpMapping.local_port 是用户本机端口，用户可以按实际服务修改。
+  TcpMapping.remote_port 是平台分配或校验的公网端口，不允许用户随意改动。
+  User.password_hash 使用 PBKDF2 结果，不保存明文密码。
+  User.frpc_token_version 用于令牌轮换后拒绝旧 frpc 心跳。
+  User.balance_mb 是创建代理时扣减的课堂演示流量余额。
+  Proxy.traffic_limit_mb 是单个代理分配的流量额度。
+  Proxy.traffic_used_bytes 是 frps 轮询得到的累计用量。
+  Proxy.current_speed_bps 是轮询器根据差值计算的瞬时速度。
+  Proxy.last_seen_at 在插件 CloseProxy 和轮询器状态更新时维护。
+  Proxy.public_url/public_urls 只用于前端展示，不参与 frps 鉴权。
+  Proxy.advanced_config 相关字段映射到 frpc transport、HTTP header 或 P2P 配置。
+
+  proxy_to_dto 面向普通用户，包含脚本生成和状态展示需要的字段。
+  admin_proxy_to_dto 面向管理员，额外包含 uid 等管理字段。
+  user_to_dto 面向管理端和用户端，隐藏 password_hash。
+  _tcp_mapping_to_dto 统一多端口映射字段命名，避免前端重复转换。
+
+  Store.lock 是整个内存仓库的唯一互斥锁。
+  路由、插件和轮询器都必须在修改 users/proxies/recharge_logs 前进入该锁。
+  next_proxy_id_unlocked 只在锁内递增，保证同一进程内代理 id 不重复。
+  sync_user_proxy_tokens_unlocked 用于令牌轮换后同步旧代理兼容字段。
+  find_proxy_by_frps_name_unlocked 统一解析 TCP 多映射、P2P fallback 和普通代理名。
+
+  数据模型能对应需求规格中的 User、Proxy、RechargeLog。
+  每个代理都有 uid，满足多租户隔离要求。
+  每个代理都有 status，满足管理员停用和删除要求。
+  每个 TCP 映射都有 local_port 和 remote_port，满足端口映射展示要求。
+  每个用户都有 balance_mb，满足流量额度扣减要求。
+  每个用户都有 frpc_token，满足多用户令牌隔离要求。
+  每个代理都有 created_at，满足审计和展示要求。
+  Store.reset 支持测试隔离，满足自动化测试要求。
+  DTO 函数集中处理输出，满足敏感字段隐藏要求。
+"""
+
 from __future__ import annotations
 
 import asyncio

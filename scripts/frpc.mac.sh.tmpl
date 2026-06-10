@@ -1,4 +1,18 @@
 #!/bin/bash
+## @file scripts/frpc.mac.sh.tmpl
+#  @brief macOS frpc 启动脚本模板，下载官方 frpc 并写入后端生成的 frpc.toml。
+#  @author BearFrps课程设计小组
+#  @course 武汉大学开源软件与技术课程 2026
+#  @date 2026-06-10
+#  @version 1.0
+#  @copyright Apache-2.0
+#  @details
+#   依赖关系：bash、curl、tar、官方 frp release。
+#   修改记录：2026-06-10，补充 Doxygen 风格文件头和安全注意事项。
+#   FRPC_CONFIG 内含用户级 metadatas.token，应按敏感信息保存。
+#   macOS arm64 与 amd64 架构下载不同 frp 包。
+#   用户修改 remotePort 或 frps_name 会导致后端插件拒绝连接。
+#   脚本运行目录会生成 frpc、frpc.toml 和临时下载文件。
 set -e
 
 echo "=== frpc 启动脚本 ==="

@@ -1,4 +1,76 @@
 <!DOCTYPE html>
+<!--
+  @file frontend/admin.html
+  @brief 管理员控制台页面，用于登录、查看用户/代理、调整端口池和管理连接状态。
+  @author BearFrps课程设计小组
+  @course 武汉大学开源软件与技术课程 2026
+  @date 2026-06-10
+  @version 1.0
+  @copyright Apache-2.0
+  @details
+    依赖关系：Tailwind CDN、Alpine.js、shared.css、mock_api.js、后端 /api/admin。
+    修改记录：2026-06-10，补充 Doxygen 风格文件头、管理边界和接口说明。
+    管理员登录后读取端口池配置、代理列表和用户列表。
+    端口池表单允许修改可分配 remotePort 范围，后端负责校验已占用端口。
+    代理表格显示所有用户的连接状态，支持停用、恢复和删除。
+    用户表格展示余额、充值总额和连接数量，方便课堂演示统计。
+
+    POST /api/admin/login：创建管理员会话。
+    POST /api/admin/logout：清理管理员会话。
+    GET /api/admin/config：读取端口池配置。
+    POST /api/admin/config：更新端口池配置。
+    GET /api/admin/proxies：读取全量代理。
+    POST /api/admin/proxies/{id}/stop：停用代理但不释放端口。
+    POST /api/admin/proxies/{id}/start：恢复代理。
+    DELETE /api/admin/proxies/{id}：删除代理并释放端口。
+    GET /api/admin/users：读取用户列表。
+
+    页面不保存管理员密码，认证状态由后端 session cookie 决定。
+    操作按钮失败时展示后端返回的错误信息，便于定位端口池和权限问题。
+
+    loggedIn 表示管理员 session 是否有效。
+    loginForm 保存用户名和密码输入。
+    config 保存端口池 start/end。
+    proxies 保存后端返回的所有代理。
+    users 保存注册用户汇总信息。
+    loading 用于避免重复提交管理操作。
+    message/error 分别展示成功和失败反馈。
+
+    stopProxy 只把代理状态改为 stopped_by_admin，不释放端口。
+    startProxy 恢复代理前仍由后端校验状态。
+    deleteProxy 逻辑删除代理并释放 TCP 端口。
+    updateConfig 只能提交合法端口范围，已占用端口是否越界由后端决定。
+    refreshAll 会同时刷新配置、代理和用户信息，保持表格一致。
+
+    代理状态与用户端使用相同颜色含义。
+    TCP 代理展示 remotePort，HTTP/P2P 代理展示类型和公开地址。
+    用户列表显示余额和连接数量，便于老师查看资源分配情况。
+    时间字段只做展示，不参与前端排序或权限判断。
+
+    管理员接口是高权限接口，正式部署必须修改默认密码。
+    管理端页面只做交互约束，不能替代后端权限检查。
+    删除代理会影响用户正在使用的脚本，课堂演示前应确认。
+  @section admin_page_doxygen Doxygen 注释约束
+    管理动作需要说明是否释放端口。
+    端口池配置需要说明与 active TCP 代理的关系。
+    高权限操作需要说明失败反馈来源。
+    页面不保存管理员密码的约束必须保留。
+    修改管理端 API 时同步更新全局文档。
+  @section admin_page_submission 平时作业提交检查
+    管理端必须能登录。
+    管理端必须能读取端口池配置。
+    管理端必须能展示代理列表。
+    管理端必须能展示用户列表。
+    管理端停用代理不得释放端口。
+    管理端删除代理必须释放端口。
+    管理端端口池修改失败时必须显示原因。
+  @section admin_page_demo 演示流程映射
+    先展示管理员登录。
+    再展示端口池配置。
+    再展示代理列表。
+    再展示用户列表。
+    最后说明停用与删除差异。
+-->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">

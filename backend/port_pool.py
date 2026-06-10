@@ -1,3 +1,22 @@
+"""@file backend/port_pool.py
+@brief 管理 frps 可分配公网 TCP 端口，支持单端口和连续端口分配。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：标准库 socket。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和端口池业务约束。
+  本模块只管理 remotePort，不管理用户机器上的 localPort。
+  allocate_contiguous 用于 TCP 多端口映射，必须保证返回的远程端口连续。
+  reserve_many 在检测到任一端口不可用时回滚已预留端口，避免部分占用。
+  update_range 调整管理员配置时保留 active proxy 已占用端口。
+  _is_port_in_use 用于跳过本机已监听端口，减少 frps 启动后绑定失败。
+
+  PortPool 只维护内存集合；持久化由 backend.deps.persist_port_range 调用完成。
+"""
+
 from __future__ import annotations
 
 import socket

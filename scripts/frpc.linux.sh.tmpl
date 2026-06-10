@@ -1,4 +1,18 @@
 #!/bin/bash
+## @file scripts/frpc.linux.sh.tmpl
+#  @brief Linux frpc 启动脚本模板，下载官方 frpc 并写入后端生成的 frpc.toml。
+#  @author BearFrps课程设计小组
+#  @course 武汉大学开源软件与技术课程 2026
+#  @date 2026-06-10
+#  @version 1.0
+#  @copyright Apache-2.0
+#  @details
+#   依赖关系：bash、curl、tar、官方 frp release。
+#   修改记录：2026-06-10，补充 Doxygen 风格文件头和安全注意事项。
+#   FRPC_CONFIG 内含用户级 metadatas.token，应按敏感信息保存。
+#   用户可以修改 localPort 适配本机服务，但不应修改 remotePort 和 metadatas。
+#   remotePort 由平台端口池分配，私自修改会被 frps 插件拒绝。
+#   脚本下载官方 frp 发布包，不从 BearFrps 后端分发 frpc 二进制。
 set -e
 
 echo "=== frpc 启动脚本 ==="

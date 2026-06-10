@@ -1,4 +1,24 @@
 <!DOCTYPE html>
+<!--
+  @file frontend/show.html
+  @brief 公网展示页，聚合展示在线用户 demo 服务入口。
+  @author BearFrps课程设计小组
+  @course 武汉大学开源软件与技术课程 2026
+  @date 2026-06-10
+  @version 1.0
+  @copyright Apache-2.0
+  @details
+    依赖关系：Tailwind CDN、Alpine.js、shared.css、mock_api.js、后端 /api/show/online。
+    修改记录：2026-06-10，补充 Doxygen 风格文件头和展示过滤说明。
+    周期性请求 /api/show/online。
+    展示代理名称、类型、公开地址、端口和最后在线时间。
+    对 HTTP 代理输出可点击 URL，对 TCP 代理展示 host:port。
+    页面不提供写操作，适合投屏和课堂演示。
+
+    后端只返回 active 且 online 的代理。
+    页面不显示 token、管理员字段、用户密码或内部 frps 配置。
+    如果在线列表为空，显示空状态而不是错误页面。
+-->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">

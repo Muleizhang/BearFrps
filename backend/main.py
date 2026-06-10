@@ -1,3 +1,21 @@
+"""@file backend/main.py
+@brief 创建 FastAPI 应用，注册 API 路由，挂载静态资源，并管理后台生命周期。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：FastAPI、静态文件服务、frps 管理器、轮询器、脚本渲染器。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头、生命周期和路由说明。
+  启动时加载脚本模板、恢复注册用户、启动 frps 管理器和流量轮询器。
+  关闭时先停止轮询器，再停止 frps，避免退出时继续访问已释放的资源。
+  /user、/admin、/show 返回三个前端页面。
+  /frontend 和 /static 挂载静态资源。
+  /mock_api.js 会把开发模式 mock 开关替换为 false，生产页面默认访问真实 API。
+  页面文件不存在时返回明确的 404 HTML，而不是抛出未捕获文件错误。
+"""
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager

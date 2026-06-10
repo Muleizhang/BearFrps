@@ -1,4 +1,19 @@
 #!/bin/bash
+## @file demo-server/test_demo_go.sh
+#  @brief 自测 Go 版 demo 留言板的构建、首页、提交留言和消息 API。
+#  @author BearFrps课程设计小组
+#  @course 武汉大学开源软件与技术课程 2026
+#  @date 2026-06-10
+#  @version 1.0
+#  @copyright Apache-2.0
+#  @details
+#   依赖关系：bash、Go 工具链、curl、临时文件。
+#   修改记录：2026-06-10，补充 Doxygen 风格文件头和测试说明。
+#   先把 main.go 构建成临时二进制。
+#   在本机临时端口启动该二进制。
+#   轮询首页并提交留言。
+#   检查 /api/messages 返回内容。
+#   cleanup 会停止后台进程并删除临时文件和测试二进制。
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)

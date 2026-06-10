@@ -1,3 +1,20 @@
+"""@file backend/routes/show_api.py
+@brief 为展示页输出当前在线且可访问的用户代理列表。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：FastAPI、backend.deps.settings、backend.models。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和展示过滤规则。
+  只展示 status=active 且 is_online=true 的代理。
+  不输出用户 token、frps 内部 token、管理员字段或密码信息。
+  TCP 使用 server_public_host 和 remotePort 拼接访问地址。
+  HTTP 代理优先使用 public_url/public_urls，支持 subdomain 展示。
+  展示接口无登录要求，因此输出字段必须保持最小化。
+"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter

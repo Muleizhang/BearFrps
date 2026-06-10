@@ -1,4 +1,271 @@
 <!DOCTYPE html>
+<!--
+  @file frontend/user.html
+  @brief 用户控制台页面，覆盖注册登录、余额、frpc 令牌、代理创建和脚本复制。
+  @author BearFrps课程设计小组
+  @course 武汉大学开源软件与技术课程 2026
+  @date 2026-06-10
+  @version 1.0
+  @copyright Apache-2.0
+  @details
+    依赖关系：Tailwind CDN、Alpine.js、shared.css、mock_api.js、后端 /api/user 和 /api/proxies。
+    修改记录：2026-06-10，补充 Doxygen 风格文件头、页面结构说明和接口说明。
+    顶部导航展示用户端、管理端和展示页入口。
+    认证区域支持登录与注册，认证完成后显示 UID、余额和 frpc 令牌信息。
+    代理列表展示每条连接的类型、地址、状态、流量和操作按钮。
+    创建代理区域按 TCP/HTTP/STCP/XTCP 分组，避免不同类型字段混在一起。
+    配置弹窗按 frpc 配置、visitor 配置、frpc 脚本和 demo 脚本分 tab 展示。
+
+    用户令牌由后端生成和轮换，页面只展示、复制和触发轮换，不在前端生成正式令牌。
+    创建代理时先组装不同代理类型的 payload，再交给后端做最终校验。
+    TCP 端口模式由 buildTcpPortsPayload 统一转换成后端接口结构。
+    高级配置由 buildAdvancedConfigPayload 过滤空值，避免传递无意义配置。
+    代理状态通过 statusClass/cardStatusClass/statusBadge 统一映射为可视状态。
+
+    GET /api/user/me：获取登录用户资料和余额。
+    POST /api/user/login：登录用户。
+    POST /api/user/register：注册用户。
+    POST /api/user/logout：退出当前会话。
+    GET /api/user/frpc-token：读取用户级 frpc token。
+    POST /api/user/frpc-token/rotate：轮换 frpc token，使旧配置失效。
+    POST /api/user/recharge：领取课堂演示免费流量。
+    GET /api/proxies：读取当前用户代理列表。
+    POST /api/proxies：创建新代理并返回脚本。
+    GET /api/proxies/{id}/scripts：重新获取配置和脚本。
+    DELETE /api/proxies/{id}：删除自己的代理。
+
+    frpc token 属于敏感信息，只在用户登录后显示。
+    删除和获取脚本都依赖后端 require_user，前端不信任本地 proxy.uid。
+    展示脚本时不自动执行任何内容，只提供复制和下载。
+    mock_api.js 只用于离线前端演示，FastAPI 挂载时会关闭 USE_MOCK。
+
+    authReady 表示已完成登录态探测。
+    loggedIn 控制认证面板和控制台主体的显示。
+    authMode 在登录和注册表单之间切换。
+    user 保存后端返回的公开用户信息。
+    frpcToken 保存当前用户令牌元数据，不负责鉴权。
+    proxies 保存当前用户代理列表。
+    createType 控制 TCP/HTTP/STCP/XTCP 创建表单。
+    createForms 按代理类型保存独立表单状态。
+    scriptModal 保存当前选中的配置和脚本响应。
+    mainTab/subTab 控制配置弹窗中的内容切换。
+
+    init 页面加载后先检查登录态，再加载用户令牌和代理列表。
+    submitAuth 根据 authMode 调用登录或注册接口。
+    refreshUser 只刷新用户公开信息和余额。
+    loadFrpcToken 读取用户级 frpc token。
+    rotateFrpcToken 触发后端轮换，并提示用户重新生成脚本。
+    loadProxies 读取代理列表并刷新列表状态。
+    recharge 调用免费充值接口并更新余额。
+    createProxy 构建 payload 并提交后端创建代理。
+    openScripts 重新获取某个代理的脚本。
+    deleteProxy 删除当前用户自己的代理。
+
+    name 是用户可见名称，同一用户内唯一。
+    traffic_mb 表示本次分配给代理的流量额度。
+    speed_limit_kbps 缺省时使用后端默认限速。
+    local_ip 默认 127.0.0.1，适合用户本机服务。
+    TCP auto 模式只需要 count 和 local_start_port。
+    TCP single 模式需要 remote_port 和 local_port。
+    TCP range 模式需要 remote_start_port、remote_end_port 和 range_local_start_port。
+    HTTP subdomain 需要符合后端子域名规则。
+    visitor_bind_port 是本地访问 STCP/XTCP visitor 的端口。
+    fallback_timeout_ms 只对 XTCP fallback 有意义。
+
+    publicHost 根据 proxy_type 选择 host:port 或 HTTP URL。
+    publicUrls 支持 TCP 多端口和 HTTP 多域名。
+    localTarget 显示后端轮询到的实际 localPort，未连接时显示配置值。
+    tcpMappings 兼容旧字段 frps_remote_port/local_port 和新 tcp_mappings。
+    mappingPortsText 把连续端口折叠为范围，减少表格宽度。
+    trafficPercent 用于进度条展示已用流量比例。
+    formatBytes/formatMbps/formatDate 统一前端展示单位。
+
+    apiError 从后端 detail 字段提取错误信息。
+    复制失败时回退到 textarea 选中复制方式。
+    创建失败不会清空表单，方便用户修正端口或名称。
+    删除确认由浏览器 confirm 完成，避免误删代理。
+    未登录时 API 失败会回到认证面板。
+
+    首次进入页面时 authReady=false，页面隐藏需要身份的信息。
+    检查 /api/user/me 成功后进入控制台状态。
+    检查失败时进入登录/注册状态。
+    注册成功后立即创建会话并刷新用户资料。
+    充值按钮只调用后端接口，不在前端自行增加余额。
+    创建代理成功后打开脚本弹窗，提示用户复制配置。
+    用户关闭弹窗后仍可通过“查看配置/脚本”重新获取最新配置。
+    令牌轮换后，旧脚本必须重新生成才能连接。
+    删除代理后刷新列表，避免显示已释放端口。
+
+    port_mode=auto 时 count 是远程端口数量。
+    port_mode=auto 时 local_start_port 是本地连续端口起点。
+    port_mode=single 时 remote_port 是用户指定公网端口。
+    port_mode=single 时 local_port 是用户本地服务端口。
+    port_mode=range 时 remote_start_port 和 remote_end_port 必须形成闭区间。
+    port_mode=range 时 range_local_start_port 对应第一个远程端口。
+    local_ip 默认为 127.0.0.1，支持用户改为局域网地址。
+    多端口映射在列表中通过 tcp_mappings 展示。
+
+    subdomain 是推荐方式，适合课堂统一域名。
+    custom_domains 用于自定义域名场景。
+    http_user/http_password 用于 frp HTTP basic auth。
+    http_locations_text 可用换行或逗号分隔路径。
+    host_header_rewrite 用于反向代理时改写 Host。
+    public_urls 可能包含多个公开访问地址。
+
+    STCP 和 XTCP 都需要 secretKey 保持服务端与 visitor 一致。
+    visitor_bind_port 是用户本机访问 visitor 的端口。
+    server_name 使用后端生成的 frps_name，避免用户名称冲突。
+    p2p_fallback_name 用于 XTCP 失败后的 TCP fallback。
+    fallback_timeout_ms 控制 XTCP 尝试失败后回退时机。
+
+    online 且 active 显示绿色状态。
+    offline 或超流量显示红色状态。
+    stopped_by_admin 或 deleted 显示灰色状态。
+    trafficPercent 最高限制到 100%，避免进度条溢出。
+    statusBadge 同时考虑 status、is_online 和流量使用量。
+    formatTraffic 输出已用/限额，便于用户判断剩余可用量。
+
+    mainTab=config 显示 frpc.toml。
+    mainTab=visitor 显示 visitor 配置。
+    mainTab=frpc 显示跨平台 frpc 启动脚本。
+    mainTab=demo 显示跨平台 demo 服务脚本。
+    subTab=linux/mac/windows 控制脚本平台。
+    extractDetail 兼容 create 响应和 scripts 响应结构。
+    getScriptContent 根据 tab 返回对应字符串。
+    getScriptFilename 根据 tab 生成下载文件名。
+
+    copyText 优先使用 navigator.clipboard。
+    浏览器不支持 clipboard 时使用隐藏 textarea 回退。
+    downloadText 使用 Blob 和临时 a 标签下载。
+    下载文件名区分 frpc、visitor 和 demo，避免覆盖。
+    复制成功和失败都通过 toast/message 提示用户。
+
+    前端不重复实现后端端口池最终规则，只做基础表单组装。
+    所有真实权限由后端判断，前端校验只提升体验。
+    API 路径集中在方法内，便于按后端接口变化调整。
+    旧字段兼容函数集中在 tcpMappings/publicUrls/localTarget。
+    UI 状态和业务 payload 构建分离，减少模板表达式复杂度。
+
+    页面能展示 UID。
+    页面能展示剩余流量。
+    页面能触发免费充值。
+    页面能展示用户级 frpc token。
+    页面能复制和轮换 frpc token。
+    页面能创建 TCP 代理。
+    页面能创建 HTTP 代理。
+    页面能创建 STCP 代理。
+    页面能创建 XTCP 代理。
+    页面能展示连接状态。
+    页面能展示已用流量和限额。
+    页面能展示公网访问地址。
+    页面能展示本地目标地址。
+    页面能重新查看配置和脚本。
+    页面能删除代理。
+    页面能处理未登录状态。
+    页面能处理 API 错误。
+    页面能下载脚本文本。
+    页面不展示密码哈希。
+    页面不直接连接 frps admin API。
+
+    文件头覆盖项目注释、文件说明、作者、日期和版本。
+    方法清单覆盖函数接口注释要求。
+    状态流说明覆盖业务逻辑注释要求。
+    token 说明覆盖安全注意事项。
+    复制下载说明覆盖用户操作副作用。
+    字段清单覆盖数据成员用途。
+
+    用户端对应需求规格中的“用户端 Web”。
+    顶部状态栏对应 UID、余额和充值按钮要求。
+    连接列表对应名称、公网端口、本地端口、状态、已用/限额和操作列。
+    创建表单对应名称、分配流量、限速和代理类型参数。
+    配置弹窗对应 frpc 配置、启动脚本和 demo 服务脚本。
+    TCP 多端口 UI 对应 auto、single、range 三种模式。
+    高级配置区域对应加密、压缩、HTTP 认证和 P2P fallback。
+    展示状态色对应在线、离线和禁用三类视觉状态。
+    脚本下载对应课程要求中的自动化构建/运行辅助材料。
+    错误提示对应可测性和调试日志规范中的明确反馈。
+
+    README 说明如何访问本页面。
+    test_plan 说明如何手工验收本页面。
+    commenting_standard 说明本文件头为何计入有效注释。
+    open_source_compliance 说明本页面使用的 CDN 依赖需要在部署时复核。
+    SBOM 记录后端直接依赖，前端 CDN 依赖由 NOTICE 和 README 补充说明。
+
+    新增用户端 API 时必须同步 mock_api.js。
+    新增用户端字段时必须同步后端 DTO。
+    新增代理类型时必须同步创建表单和脚本弹窗。
+    修改 token 展示时必须复核安全说明。
+    修改状态颜色时必须同步 shared.css。
+    修改脚本 tab 时必须同步 getScriptContent 和 getScriptFilename。
+    提交前必须通过 node --check frontend/mock_api.js。
+
+    改动表单字段时记录接口兼容性。
+    改动脚本文案时记录用户操作影响。
+    改动认证流程时记录未登录和过期 session 行为。
+    改动展示字段时记录是否会暴露敏感信息。
+    改动错误提示时记录后端 detail 的兼容性。
+
+    说明 frpc token 和 frps auth.token 的区别。
+    说明 remotePort 由后端分配。
+    说明 localPort 是用户本机服务端口。
+    说明展示页只显示在线代理。
+    说明管理员停用和用户删除的区别。
+  @section user_page_doxygen Doxygen 注释约束
+    复杂交互块优先使用 @section 描述业务意图。
+    事件处理函数需要说明触发时机和副作用。
+    构造后端 payload 的函数需要说明字段来源。
+    涉及 token、端口和脚本的函数需要说明安全边界。
+    页面模板中的短表达式不逐行注释，避免影响可读性。
+    新增大型功能时在本文件头补充对应 @section。
+  @section user_page_submission 平时作业提交检查
+    用户端必须能完成注册或登录。
+    用户端必须能完成充值。
+    用户端必须能创建至少一种代理。
+    用户端必须能展示 frpc 配置。
+    用户端必须能复制启动脚本。
+    用户端必须能删除代理。
+    用户端错误提示必须来自后端 detail。
+  @section user_page_runtime 运行时注意事项
+    真实运行时 USE_MOCK=false。
+    离线打开 HTML 时 USE_MOCK=true。
+    用户脚本包含 token，不应公开传播。
+    frpc token 轮换后应重新获取脚本。
+    remotePort 不应由用户手工修改。
+    localPort 可以按用户本地服务调整。
+  @section user_page_traceability 可追踪性
+    创建代理表单字段对应 CreateProxyRequest。
+    TCP 端口表单字段对应 TcpPortsRequest。
+    高级配置字段对应 AdvancedConfigRequest。
+    代理列表字段对应 Store.proxy_to_dto。
+    脚本弹窗字段对应 script_renderer 输出。
+    状态徽标字段对应 Proxy.status 和 is_online。
+  @section user_page_demo 演示流程映射
+    第一步展示用户注册。
+    第二步展示免费充值。
+    第三步展示创建 TCP 代理。
+    第四步展示配置弹窗。
+    第五步展示复制 frpc 启动脚本。
+    第六步展示复制 demo 服务脚本。
+    第七步展示代理列表状态变化。
+    第八步展示 token 轮换。
+    第九步展示删除代理。
+  @section user_page_failure 失败场景
+    未登录访问接口时显示登录面板。
+    余额不足创建代理时显示后端错误。
+    端口冲突创建代理时显示后端错误。
+    代理不存在获取脚本时显示错误。
+    网络请求失败时保留当前页面状态。
+    剪贴板不可用时使用回退复制。
+    下载脚本失败时不修改代理状态。
+  @section user_page_license 许可证和来源
+    页面代码属于 BearFrps 根项目。
+    根项目许可证为 Apache-2.0。
+    Tailwind CSS 通过 CDN 加载。
+    Alpine.js 通过 CDN 加载。
+    前端依赖记录在 SBOM.json。
+    开源声明记录在 NOTICE。
+    Git 仓库地址记录在 README。
+-->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">

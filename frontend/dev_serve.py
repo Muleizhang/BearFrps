@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+"""@file frontend/dev_serve.py
+@brief 本地开发时提供前端静态文件服务，并附加 CORS 与 no-store 响应头。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：Python 标准库 http.server、functools、sys、os。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和开发用途说明。
+  该脚本只用于前端静态调试，正式运行由 FastAPI 挂载 frontend 目录。
+  no-store 头避免浏览器缓存 mock_api.js，便于课堂演示时快速刷新状态。
+  CORS 头允许前端页面在不同端口访问后端 API。
+"""
+
 import http.server
 import functools
 import sys

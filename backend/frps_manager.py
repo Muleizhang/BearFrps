@@ -1,3 +1,21 @@
+"""@file backend/frps_manager.py
+@brief 渲染 frps.toml/start.sh，并在 FastAPI 生命周期内启动或停止 frps。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：asyncio、操作系统信号、backend.config.Settings。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和进程管理注释。
+  frps 配置启用 HTTP 插件，回调地址固定指向同进程后端的 /frps-plugin。
+  frps admin API 只监听本地地址，由后端轮询器读取状态，不直接暴露给公网。
+  render_start_script 会按系统架构下载官方 frp 发布包，避免仓库内提交大型二进制。
+  start 会优先写入配置和启动脚本，再尝试启动 frps；缺少二进制时输出提示并跳过。
+  会写入 frps/frps.toml 和 frps/start.sh。
+  成功启动时会持有 asyncio.subprocess.Process，应用退出时发送 SIGTERM。
+"""
+
 from __future__ import annotations
 
 import asyncio

@@ -1,3 +1,38 @@
+/*
+  @file frontend/shared.css
+  @brief 定义用户端、管理端和展示页共用的状态色、卡片和布局样式。
+  @author BearFrps课程设计小组
+  @course 武汉大学开源软件与技术课程 2026
+  @date 2026-06-10
+  @version 1.0
+  @copyright Apache-2.0
+  @details
+    依赖关系：三份 HTML 页面和 Tailwind 基础样式。
+    修改记录：2026-06-10，补充 Doxygen 风格文件头和样式用途说明。
+    row-online/card-online 表示 active 且在线。
+    row-offline/card-offline 表示离线、异常或流量超额。
+    row-disabled/card-disabled 表示管理员停用或删除状态。
+    copy-button 用于配置和脚本复制按钮，保持各页面操作一致。
+    code-block 用于展示 frpc.toml 和脚本内容，保持等宽字体和可滚动。
+
+    状态色通过 :root 变量统一管理，避免页面之间颜色含义不一致。
+    本文件只放共享样式，页面特定布局优先写在 HTML 的 Tailwind 类中。
+
+    online 代表 frps 当前看到连接在线且后端状态 active。
+    offline 代表连接未上线、轮询不到或流量超额。
+    disabled 代表管理员停用或用户删除后的不可用状态。
+
+    .status-badge 用于小型状态文本。
+    .proxy-card 用于移动端和展示页卡片布局。
+    .script-tabs 用于配置弹窗 tab 区域。
+    .code-block 保证长脚本横向滚动，不撑破弹窗。
+    .copy-button 保证复制按钮在三端页面上尺寸一致。
+
+    共享样式避免固定大宽度，具体网格由页面 Tailwind 类控制。
+    长 URL 和脚本通过 word-break 或 overflow 处理，避免遮挡相邻内容。
+    颜色保持低饱和度，方便投影设备显示状态而不影响文字可读性。
+*/
+
 :root {
   --status-online-border: #10b981;
   --status-online-bg: #d1fae5;

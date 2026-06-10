@@ -1,3 +1,18 @@
+"""@file tests/conftest.py
+@brief 为每个测试重置 Store、端口池、用户 session 和临时持久化文件。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：pytest、backend.deps、backend.models、backend.auth。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和测试隔离说明。
+  每个测试使用 tmp_path 替换配置文件和用户文件路径。
+  Store、端口池和 session 在测试前清空，测试后恢复初始端口范围。
+  这样 API、插件和轮询器测试不会共享用户余额、代理或端口占用状态。
+"""
+
 from __future__ import annotations
 
 import pytest

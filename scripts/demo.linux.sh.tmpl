@@ -1,4 +1,18 @@
 #!/bin/bash
+## @file scripts/demo.linux.sh.tmpl
+#  @brief Linux demo 留言板启动脚本模板，由后端渲染后交给用户复制运行。
+#  @author BearFrps课程设计小组
+#  @course 武汉大学开源软件与技术课程 2026
+#  @date 2026-06-10
+#  @version 1.0
+#  @copyright Apache-2.0
+#  @details
+#   依赖关系：bash、python3 或预编译 demo-server、curl。
+#   修改记录：2026-06-10，补充 Doxygen 风格文件头和脚本行为说明。
+#   读取本地端口、昵称和初始留言。
+#   优先下载并运行 Python 版 demo_server.py。
+#   如果没有 python3，则按 Linux 架构下载预编译 Go 兜底二进制。
+#   本脚本只启动用户本地服务，不直接修改 frpc 配置。
 set -e
 
 echo "=== Demo 留言板服务启动脚本 ==="

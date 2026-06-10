@@ -1,3 +1,22 @@
+"""@file backend/routes/admin_api.py
+@brief 提供管理员登录、端口池配置、代理管理和用户列表接口。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：FastAPI、backend.auth、backend.deps、backend.models。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和管理操作约束。
+  /api/admin/login 和 /logout 管理管理员 session。
+  /api/admin/config 读取或更新可分配公网端口范围。
+  /api/admin/proxies 返回全量代理 DTO，并允许停用、恢复和删除。
+  /api/admin/users 返回注册用户和连接数量。
+  缩小端口池前必须检查 active TCP 代理是否仍在新范围内。
+  HTTP/STCP/XTCP 不占用平台 TCP 端口池，端口范围检查只针对 TCP remotePort。
+  管理员删除代理会释放端口，停用代理不释放端口，避免用户配置被其他人抢占。
+"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response

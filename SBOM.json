@@ -1,0 +1,199 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:2a8b7c7a-1e5c-4d8b-9c9a-bearfrps0001",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-06-10T00:00:00Z",
+    "authors": [
+      {
+        "name": "BearFrps课程设计小组，武汉大学开源软件与技术课程 2026"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "BearFrps",
+      "version": "0.1.0-course-design",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "frp",
+      "version": "0.58.1",
+      "purl": "pkg:github/fatedier/frp@v0.58.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/fatedier/frp"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "frp-Android",
+      "version": "1.3.2",
+      "purl": "pkg:github/AceDroidX/frp-Android@1.3.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/AceDroidX/frp-Android"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fastapi",
+      "version": ">=0.115,<1",
+      "purl": "pkg:pypi/fastapi",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "uvicorn",
+      "version": ">=0.30,<1",
+      "purl": "pkg:pypi/uvicorn",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "httpx",
+      "version": ">=0.27,<1",
+      "purl": "pkg:pypi/httpx",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pydantic",
+      "version": ">=2,<3",
+      "purl": "pkg:pypi/pydantic",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "python-dotenv",
+      "version": ">=1,<2",
+      "purl": "pkg:pypi/python-dotenv",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pytest",
+      "version": ">=8,<9",
+      "purl": "pkg:pypi/pytest",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tailwindcss",
+      "version": "cdn",
+      "purl": "pkg:npm/tailwindcss",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "alpinejs",
+      "version": "3.x",
+      "purl": "pkg:npm/alpinejs",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "demo-server",
+      "version": "0.1.0-course-design",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "BearFrps",
+      "dependsOn": [
+        "frp",
+        "fastapi",
+        "uvicorn",
+        "httpx",
+        "pydantic",
+        "python-dotenv",
+        "pytest",
+        "tailwindcss",
+        "alpinejs",
+        "demo-server"
+      ]
+    }
+  ]
+}

@@ -1,3 +1,279 @@
+/*
+  @file frontend/mock_api.js
+  @brief 为前端页面提供浏览器内 mock API，便于无后端时进行页面演示和交互验证。
+  @author BearFrps课程设计小组
+  @course 武汉大学开源软件与技术课程 2026
+  @date 2026-06-10
+  @version 1.0
+  @copyright Apache-2.0
+  @details
+    依赖关系：浏览器 localStorage、Fetch API、Blob、URL。
+    修改记录：2026-06-10，补充 Doxygen 风格文件头、mock 数据边界和接口说明。
+    本文件直接打开 HTML 时默认 USE_MOCK=true。
+    通过 FastAPI /mock_api.js 加载时，后端会把 USE_MOCK 改为 false。
+    USE_MOCK=false 时不会拦截 fetch，页面直接访问真实后端 API。
+
+    mock 用户、代理、端口池和 session 存在 localStorage。
+    mock 数据只用于前端演示，不代表服务端真实权限。
+    clearCurrentUid 仅清理浏览器模拟 session，不影响真实后端 cookie。
+
+    /api/user/register、/login、/logout、/me。
+    /api/user/frpc-token、/rotate、/recharge。
+    /api/proxies 创建、列表、删除和脚本获取。
+    /api/admin/login、/logout、/config、/proxies、/users。
+    /api/show/online 展示在线代理。
+
+    makeFrpcConfig 与后端 script_renderer 保持字段语义一致。
+    TCP 多端口映射和端口池冲突按前端可演示的方式近似模拟。
+    tokenForProxy 兼容旧代理 token 和新用户级 frpc token。
+    statusBadge/statusClass 与真实页面状态文案保持一致。
+
+    mock token 不具备真实安全性，不可作为生产认证方案。
+    正式运行时后端覆盖 USE_MOCK=false，避免浏览器本地数据绕过真实 API。
+
+    mock_users 保存用户资料、余额、密码和 frpc token。
+    mock_proxies 保存代理列表和脚本生成需要的字段。
+    mock_uid 兼容旧匿名用户。
+    mock_user_session_uid 表示当前浏览器模拟登录用户。
+    mock_admin_session 表示管理员模拟登录状态。
+
+    requireUser 先确认当前模拟用户存在。
+    检查余额、名称、连接数和代理类型。
+    TCP 代理通过 allocateTcpPlan 生成远程端口映射。
+    HTTP 代理生成 subdomain 和 public_url。
+    STCP/XTCP 代理生成服务端配置和 visitor 配置。
+    创建成功后扣减用户余额，并把 proxy 写入 localStorage。
+
+    makeFrpcConfig 输出服务端代理配置。
+    makeVisitorConfig 输出 STCP/XTCP visitor 配置。
+    makeFrpcConfigs 把 server/visitor 两类配置聚合。
+    makeScripts 输出 Linux、macOS 和 Windows 脚本。
+    demo 脚本内嵌简化版留言板服务，便于离线演示。
+
+    mockAllocatableStart/mockAllocatableEnd 模拟管理员端口池配置。
+    auto 模式寻找连续端口。
+    single 模式直接校验指定端口。
+    range 模式校验指定连续范围。
+    allocatedRemotePorts 汇总当前未删除代理占用端口。
+    HTTP 代理不占用 TCP remotePort。
+
+    refreshOnlineStatus 周期性随机改变在线状态和速度。
+    statusClass/cardStatusClass/statusBadge 与真实后端 DTO 字段兼容。
+    show/online 只返回 active 且 is_online 的代理。
+    deleted 代理保留在 localStorage 中，但普通列表会过滤。
+
+    tcpMappings 同时读取 tcp_mappings 和旧版 frps_remote_port/local_port。
+    withPublicUrl 为旧数据补齐 public_url 和 public_urls。
+    normalizeAdvancedConfig 兼容缺失的高级配置字段。
+    tokenForProxy 优先用户级 token，缺失时回退代理 token。
+
+    mockError 返回与 FastAPI detail 类似的结构。
+    fetch 拦截器把错误包装成 Response，便于页面统一处理。
+    未匹配路由返回 404，避免静默成功掩盖页面调用错误。
+    JSON 解析失败会让调用方看到异常，便于开发阶段定位问题。
+
+    makeUid 生成模拟用户 uid。
+    legacyUid 读取旧版匿名 uid。
+    currentUid 读取当前模拟登录用户。
+    setCurrentUid 写入当前模拟登录用户。
+    clearCurrentUid 清除当前模拟登录用户。
+    loadUsers 读取 localStorage 中的用户表。
+    saveUsers 写回用户表。
+    loadProxies 读取代理列表。
+    saveProxies 写回代理列表。
+    normalizeUsername 统一用户名格式。
+    makeUserToken 生成模拟用户 frpc token。
+    tokenForProxy 兼容用户级 token 和代理级 token。
+    tcpMappings 统一读取 TCP 映射。
+    proxyPorts 返回代理占用的远程端口。
+    allocatedRemotePorts 统计当前已占用端口集合。
+    findAvailablePorts 查找连续可用端口。
+    allocateTcpPlan 按端口模式生成远程端口计划。
+    normalizeAdvancedConfig 过滤和规范化高级配置。
+    normalizeHttpLocations 解析 HTTP 路径列表。
+    normalizeHostHeader 校验 Host header rewrite。
+    withPublicUrl 补齐公开访问 URL。
+    tomlBool 输出 TOML 布尔值。
+    tomlString 输出 TOML 字符串。
+    tomlArray 输出 TOML 数组。
+    pushTransportLines 输出传输高级配置。
+    pushHttpAdvancedLines 输出 HTTP 高级配置。
+    makeFrpcConfig 输出服务端 frpc 配置。
+    makeVisitorConfig 输出 visitor 配置。
+    makeFrpcConfigs 聚合配置对象。
+    makeScripts 输出三平台启动脚本。
+    randomTraffic 生成模拟流量。
+    refreshOnlineStatus 模拟在线状态变化。
+    statusClass 输出表格状态类。
+    cardStatusClass 输出卡片状态类。
+    statusBadge 输出状态文案。
+    mockResponse 构造 Response 对象。
+    apiError 构造页面可读错误。
+    fallbackCopy 处理剪贴板回退。
+    downloadText 下载脚本文本。
+
+    POST /api/user/register 创建模拟用户。
+    POST /api/user/login 登录模拟用户。
+    POST /api/user/logout 清除模拟会话。
+    GET /api/user/me 返回当前模拟用户。
+    GET /api/user/frpc-token 返回用户级 token。
+    POST /api/user/frpc-token/rotate 轮换用户级 token。
+    POST /api/user/recharge 增加模拟余额。
+    GET /api/proxies 返回当前用户代理。
+    POST /api/proxies 创建模拟代理。
+    GET /api/proxies/{id}/scripts 返回配置和脚本。
+    DELETE /api/proxies/{id} 删除当前用户代理。
+    POST /api/admin/login 创建模拟管理员会话。
+    POST /api/admin/logout 清除模拟管理员会话。
+    GET /api/admin/config 返回端口池范围。
+    POST /api/admin/config 更新端口池范围。
+    GET /api/admin/proxies 返回所有代理。
+    POST /api/admin/proxies/{id}/stop 停用代理。
+    POST /api/admin/proxies/{id}/start 恢复代理。
+    DELETE /api/admin/proxies/{id} 删除代理。
+    GET /api/admin/users 返回用户列表。
+    GET /api/show/online 返回在线展示列表。
+
+    mock 密码以明文保存在 localStorage，只用于离线演示。
+    mock 在线状态随机变化，不代表真实 frps 连接。
+    mock 流量随机增长，不代表真实流量计费。
+    mock 管理员认证只检查固定用户名和密码。
+    mock 不启动 frps，也不验证真实端口是否被本机占用。
+    mock 不执行脚本，只返回脚本文本。
+    mock 的错误信息尽量贴近后端 detail，但不是后端完整校验。
+    mock 的 token 轮换会同步代理兼容字段，便于页面继续展示。
+
+    后端新增字段时，先更新 DTO 兼容函数，再更新页面展示。
+    后端新增代理类型时，需要补充创建 payload、配置生成和路由模拟。
+    修改脚本模板字段时，应同步 script_renderer 和 mock_api。
+    localStorage 数据结构变更时，应保留旧字段兼容，避免刷新后页面崩溃。
+    真实运行时 USE_MOCK=false，不能依赖 mock 独有行为。
+
+    mock 支持用户注册。
+    mock 支持用户登录。
+    mock 支持用户退出。
+    mock 支持免费充值。
+    mock 支持 frpc token 查询。
+    mock 支持 frpc token 轮换。
+    mock 支持 TCP 代理创建。
+    mock 支持 HTTP 代理创建。
+    mock 支持 STCP 代理创建。
+    mock 支持 XTCP 代理创建。
+    mock 支持管理员登录。
+    mock 支持端口池配置。
+    mock 支持代理停用。
+    mock 支持代理恢复。
+    mock 支持代理删除。
+    mock 支持展示页在线列表。
+    mock 支持脚本复制和下载辅助函数。
+    mock 支持旧字段兼容。
+    mock 支持流量和速度模拟。
+    mock 支持错误响应统一结构。
+
+    README 的本地预览可以直接使用 mock。
+    测试计划中的手工验收可用 mock 做前端预演。
+    开源合规文档不把 mock 视作第三方组件。
+    注释规范要求的业务逻辑说明集中写在本文件头。
+    真实后端 API 变化时，本文件应同步更新以保持文档一致。
+
+    mock 用户表对应课程需求中的 User。
+    mock 代理表对应课程需求中的 Proxy。
+    mock 余额字段对应充值和流量扣减要求。
+    mock 端口池对应公网 remote_port_pool。
+    mock scripts 返回值对应配置与脚本模态框。
+    mock show/online 对应公网展示聚合页。
+    mock admin/config 对应管理员端口池调整。
+    mock token 轮换对应多用户令牌隔离。
+    mock TCP mappings 对应多端口 TCP 代理。
+    mock visitor 配置对应 STCP/XTCP 访问者脚本。
+
+    mock 不替代 pytest 自动化测试。
+    mock 不替代 frps/frpc 真实连通性测试。
+    mock 不保存敏感生产数据。
+    mock 不参与后端权限判断。
+    mock 仅用于前端离线演示和课程答辩预览。
+
+    新增真实后端 API 时必须补 mock 路由。
+    新增 DTO 字段时必须补 withPublicUrl 或兼容函数。
+    新增脚本占位符时必须补 makeScripts。
+    新增代理状态时必须补 statusBadge。
+    修改 localStorage 结构时必须保留迁移兼容。
+    修改管理员接口时必须同步 admin.html。
+    提交前必须通过 node --check。
+
+    改动用户数据结构时记录迁移策略。
+    改动代理数据结构时记录旧字段兼容方式。
+    改动脚本生成时记录和后端 renderer 的一致性。
+    改动状态模拟时记录对展示页的影响。
+    改动错误响应时记录页面 apiError 是否仍可解析。
+
+    mock 用于前端离线演示。
+    mock 不替代真实 frps 联调。
+    mock 数据存放在浏览器本地。
+    mock 关闭后页面访问真实后端。
+    mock 帮助说明前后端接口契约。
+  @section mock_doxygen Doxygen 注释约束
+    mock API 是接口契约示例，路由新增必须补充 @section。
+    端口、token、脚本和权限相关逻辑必须说明与真实后端的差异。
+    大段内嵌脚本文本不逐行注释，避免破坏脚本原文。
+    修改 localStorage schema 时需要说明迁移或兼容策略。
+    mock 逻辑不作为安全实现，注释中必须保留此边界。
+  @section mock_submission 平时作业提交检查
+    mock 必须支持用户端无后端预览。
+    mock 必须支持管理端无后端预览。
+    mock 必须支持展示页无后端预览。
+    mock 必须保持主要 API 路径与后端一致。
+    mock 必须保持错误响应 detail 字段。
+    mock 必须能通过 node --check。
+  @section mock_traceability 可追踪性
+    用户数据对应 backend.models.User。
+    代理数据对应 backend.models.Proxy。
+    TCP 映射对应 backend.models.TcpMapping。
+    token 轮换对应用户级 frpc_token_version。
+    show online 对应 backend.routes.show_api。
+    admin config 对应 backend.routes.admin_api。
+    proxy scripts 对应 backend.script_renderer。
+  @section mock_security_boundary 安全边界
+    mock 中的密码不是安全存储。
+    mock 中的 token 不是安全随机令牌。
+    mock 中的在线状态不是 frps 实际状态。
+    mock 中的流量不是实际网络流量。
+    mock 只用于 UI 和接口契约演示。
+    生产运行必须依赖真实 FastAPI 后端。
+  @section mock_demo 演示流程映射
+    mock 可以演示用户注册。
+    mock 可以演示用户登录。
+    mock 可以演示充值。
+    mock 可以演示代理创建。
+    mock 可以演示脚本弹窗。
+    mock 可以演示管理员登录。
+    mock 可以演示代理停用。
+    mock 可以演示展示页在线列表。
+    mock 可以在没有 frps 时预演口头报告。
+  @section mock_validation 输入校验边界
+    用户名会统一小写。
+    密码只做演示级长度检查。
+    代理名不能为空。
+    traffic_mb 必须能转成数字。
+    TCP remotePort 必须在 mock 端口池中。
+    HTTP subdomain 会做简单规范化。
+    高级配置只做前端演示级校验。
+  @section mock_runtime 运行时约束
+    fetch 拦截只在 USE_MOCK=true 时生效。
+    mockResponse 模拟浏览器 Response。
+    localStorage 读写可能被浏览器隐私设置限制。
+    随机在线状态只用于视觉演示。
+    mock 不启动本地 demo 服务。
+    mock 不下载 frpc 二进制。
+    mock 不写入后端 config 目录。
+  @section mock_license 许可证和来源
+    本文件属于 BearFrps 根项目。
+    根项目许可证为 Apache-2.0。
+    前端第三方依赖见 SBOM.json。
+    开源声明见 NOTICE。
+    Git 仓库地址见 README。
+*/
+
 (function () {
   window.USE_MOCK = true;
   window.MOCK_SERVER_HOST = "120.46.51.131";

@@ -1,3 +1,17 @@
+## @file scripts/demo.win.ps1.tmpl
+#  @brief Windows PowerShell demo 留言板启动脚本模板。
+#  @author BearFrps课程设计小组
+#  @course 武汉大学开源软件与技术课程 2026
+#  @date 2026-06-10
+#  @version 1.0
+#  @copyright Apache-2.0
+#  @details
+#   依赖关系：PowerShell、python/py 或预编译 demo-server.exe。
+#   修改记录：2026-06-10，补充 Doxygen 风格文件头和脚本行为说明。
+#   读取本地端口、昵称和初始留言。
+#   优先用 Python 运行 demo_server.py。
+#   如果系统没有 Python，则下载 Windows amd64 兜底二进制。
+#   该脚本只服务课程演示，不写入注册表或修改系统服务。
 Write-Host "=== Demo 留言板服务启动脚本 ==="
 $portInput = Read-Host "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]"
 if ([string]::IsNullOrWhiteSpace($portInput)) { $port = {{DEFAULT_LOCAL_PORT}} } else { $port = $portInput }

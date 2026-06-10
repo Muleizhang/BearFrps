@@ -1,3 +1,25 @@
+/// @file demo-server/main.go
+/// @brief Go 版 demo 留言板服务，用作没有 Python 环境时的兜底二进制。
+/// @author BearFrps课程设计小组
+/// @course 武汉大学开源软件与技术课程 2026
+/// @date 2026-06-10
+/// @version 1.0
+/// @copyright Apache-2.0
+/// @details
+//  依赖关系：Go 标准库 net/http、encoding/json、sync、time。
+//  修改记录：2026-06-10，补充 Doxygen 风格文件头、接口说明和并发约束。
+//   该程序与 demo_server.py 提供相同的课堂演示能力。
+//   用户本地运行后，frpc 会把它的本地端口暴露到公网 remotePort。
+//   留言数据只在进程内存中保存，重启后清空。
+//   页面样式内嵌在 HTML 模板中，避免分发额外静态文件。
+//
+//   GET / 返回留言板 HTML。
+//   GET /api/messages 返回 JSON 数组。
+//   POST /api/messages 追加留言并返回 ok。
+//
+//   app.mu 保护 messages 切片，避免多个请求同时读写。
+//   输入会截断最大长度，避免单条留言破坏课堂展示布局。
+//   HTTP 服务器监听 0.0.0.0，便于 frpc 从本机转发。
 package main
 
 import (

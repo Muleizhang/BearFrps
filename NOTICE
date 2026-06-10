@@ -1,0 +1,35 @@
+BearFrps
+Copyright 2026 BearFrps课程设计小组, 武汉大学开源软件与技术课程 2026
+
+BearFrps is licensed under the Apache License, Version 2.0.
+
+This course project dynamically manages frps connections and provides user,
+admin, and public display pages for classroom demonstration.
+
+Third-party notices:
+
+1. frp
+   - Project: https://github.com/fatedier/frp
+   - License: Apache License 2.0
+   - Use in BearFrps: frps/frpc protocol, server plugin integration, and
+     compatible generated frpc configuration.
+   - Source changes in this repository: none to upstream frp source code.
+
+2. frp-Android
+   - Project: https://github.com/AceDroidX/frp-Android
+   - License: Apache License 2.0
+   - Use in BearFrps: recorded as a mobile frp client component that may be
+     adapted for this platform.
+   - Source changes in this repository: none in this documentation pass.
+     Future source modifications must retain upstream notices and add a
+     clear modification statement in the touched files.
+
+3. Python and frontend runtime dependencies
+   - FastAPI, Uvicorn, HTTPX, Pydantic, python-dotenv, and pytest are used by
+     the backend and test suite.
+   - Tailwind CSS and Alpine.js are loaded by the frontend pages through CDN
+     links for the course demonstration UI.
+   - Their license identifiers and package versions are recorded in
+     SBOM.json for course-design compliance review.
+
+This NOTICE file is informational and does not change the license terms.

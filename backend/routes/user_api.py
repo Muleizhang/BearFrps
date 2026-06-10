@@ -1,3 +1,84 @@
+"""@file backend/routes/user_api.py
+@brief 提供用户注册登录、余额充值、frpc 令牌、代理申请、脚本获取和删除接口。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：FastAPI、pydantic、认证模块、端口池、脚本渲染器、用户持久化。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头、接口说明和代理创建业务规则。
+  /api/user/register 和 /login 创建用户会话。
+  /api/user/me 返回当前登录用户公开信息。
+  /api/user/frpc-token 和 /rotate 管理用户级 frpc 令牌。
+  /api/proxies 支持创建、列表、删除和重新获取脚本。
+  创建代理前检查余额、连接数、名称唯一性、端口范围和高级配置。
+  TCP 支持 auto/single/range 三种端口模式，并写入 tcp_mappings。
+  HTTP 代理使用 subdomain 或 customDomains 生成公开访问 URL。
+  STCP/XTCP 生成服务端代理和访问者脚本，fallback TCP 端口仍需端口池校验。
+  创建成功后立即扣减用户余额，删除代理不退还已分配流量。
+
+  用户输入不合法返回 HTTP 400。
+  未登录用户由 require_user 返回 HTTP 401。
+  操作非本人代理返回 HTTP 404，避免泄露其他用户资源是否存在。
+  RegisterRequest 只接收 username/password，用户名会在认证层规范化。
+  LoginRequest 与注册共用密码校验逻辑，避免登录路径绕过基础规则。
+  TcpPortsRequest 表达 auto/single/range 三种端口分配模式。
+  AdvancedConfigRequest 表达传输加密、压缩、HTTP 认证和 P2P fallback 设置。
+  CreateProxyRequest 是前端创建表单的统一入口，具体字段按 proxy_type 生效。
+
+  读取当前用户并进入 store.lock。
+  校验用户余额是否足够支付 traffic_mb。
+  校验连接数量是否超过 max_connections_per_user。
+  校验同一用户下代理名称是否重复。
+  按 proxy_type 分派到 TCP、HTTP、STCP 或 XTCP 参数构建逻辑。
+  成功创建 Proxy 后扣减余额并保存用户数据。
+  退出锁后渲染 frpc 配置和脚本，返回给前端弹窗展示。
+
+  auto 模式从端口池申请 count 个连续可用端口。
+  single 模式校验用户指定 remote_port 在合法范围且未占用。
+  range 模式校验 remote_start_port 到 remote_end_port 连续且数量不超过上限。
+  local_start_port 需要保证映射后的本地端口不超过 65535。
+  任一端口预留失败时必须回滚已预留端口。
+
+  subdomain 会拼接 effective_subdomain_host 生成公开 URL。
+  custom_domains 只接受规范化后的域名列表。
+  locations、host_header_rewrite、http_user/http_password 作为高级配置输出。
+  HTTP 代理不占用 TCP 端口池，因此不影响管理员端口范围收缩。
+
+  secretKey 使用用户级令牌或代理字段派生，visitor 配置必须一致。
+  fallback TCP 代理用于 XTCP 无法打洞时的回退连接。
+  fallback remotePort 仍然占用端口池，需要和普通 TCP 端口同样校验。
+  visitor_bind_port 是用户本地访问端口，不进入平台端口池。
+
+  响应中的 proxy 是安全 DTO，不直接暴露 password_hash。
+  frpc_config 是当前服务端配置快照，用户轮换令牌后需要重新获取。
+  scripts 按 linux/mac/windows 分组，前端只负责复制或下载。
+  删除代理返回 ok=true，端口释放在后端同步完成。
+
+  用户接口覆盖注册、登录、退出、查询当前用户。
+  流量接口覆盖免费充值和余额扣减。
+  令牌接口覆盖查询和轮换。
+  代理接口覆盖创建、列表、脚本获取和删除。
+  创建代理时同时返回配置和脚本，满足课程演示开箱即用要求。
+  创建失败返回明确错误，满足可测性和可调试性要求。
+  删除代理释放端口，满足端口池复用要求。
+  获取脚本会重新渲染当前 token，满足令牌轮换后恢复连接要求。
+  所有用户操作都依赖 require_user，满足访问控制要求。
+  管理端操作不在本模块实现，保持用户/管理员边界清晰。
+
+  name 去除首尾空白。
+  traffic_mb 必须为正数。
+  speed_limit_kbps 使用默认值或用户指定值。
+  proxy_type 只允许受支持类型。
+  remote_port 必须在 1 到 65535。
+  allocatable 端口必须在管理员配置范围内。
+  local_port 必须在 1 到 65535。
+  subdomain 需要小写并符合域名片段规则。
+  locations 需要解析为路径列表。
+  bandwidth_limit_mode 只允许 client 或 server。
+"""
+
 from __future__ import annotations
 
 import re

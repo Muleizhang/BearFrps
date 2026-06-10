@@ -1,3 +1,20 @@
+"""@file backend/user_persistence.py
+@brief 把注册用户、密码哈希、余额和 frpc 令牌保存到本地 JSON 文件。
+@author BearFrps课程设计小组
+@course 武汉大学开源软件与技术课程 2026
+@date 2026-06-10
+@version 1.0
+@copyright Apache-2.0
+@details
+  依赖关系：json、pathlib、backend.models.User。
+  修改记录：2026-06-10，补充 Doxygen 风格文件头和迁移说明。
+  历史用户记录可能没有 frpc_token、version 或 rotated_at 字段。
+  load_registered_users_unlocked 会通过 User 模型默认值补齐缺失字段，并回写文件。
+  这样旧账号在升级后可以直接获得用户级令牌，不需要手工迁移数据库。
+  读取和保存都访问 config/users.json。
+  函数名带 unlocked，表示调用方必须在 store.lock 内调用，避免并发写文件。
+"""
+
 from __future__ import annotations
 
 import json
