@@ -56,6 +56,8 @@ class FrpsManager:
         admin_port = _port_from_url(self.settings.frps_admin_api_url, 7500)
         return f"""bindAddr = "0.0.0.0"
 bindPort = {self.settings.frps_bind_port}
+vhostHTTPPort = {self.settings.frps_vhost_http_port}
+subdomainHost = "{self.settings.effective_subdomain_host}"
 
 webServer.addr = "127.0.0.1"
 webServer.port = {admin_port}
@@ -66,7 +68,7 @@ auth.method = "token"
 auth.token = "{self.settings.frps_auth_token}"
 
 transport.heartbeatTimeout = 15
-maxPortsPerClient = 1
+maxPortsPerClient = {self.settings.max_tcp_ports_per_proxy}
 allowPorts = [
   {{ start = {start}, end = {end} }}
 ]

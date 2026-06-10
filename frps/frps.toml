@@ -1,5 +1,7 @@
 bindAddr = "0.0.0.0"
 bindPort = 7000
+vhostHTTPPort = 8080
+subdomainHost = "127.0.0.1"
 
 webServer.addr = "127.0.0.1"
 webServer.port = 7500
@@ -10,7 +12,7 @@ auth.method = "token"
 auth.token = "bearfrps-internal"
 
 transport.heartbeatTimeout = 15
-maxPortsPerClient = 1
+maxPortsPerClient = 10
 allowPorts = [
   { start = 1, end = 65535 }
 ]

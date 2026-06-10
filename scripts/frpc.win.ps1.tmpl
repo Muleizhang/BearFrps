@@ -1,6 +1,4 @@
 Write-Host "=== frpc 启动脚本 ==="
-$portInput = Read-Host "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]"
-if ([string]::IsNullOrWhiteSpace($portInput)) { $port = {{DEFAULT_LOCAL_PORT}} } else { $port = $portInput }
 $frpVersion = "{{FRP_VERSION}}"
 $frpVersionNoV = $frpVersion -replace '^v', ''
 
@@ -18,22 +16,8 @@ if (-not (Test-Path "frpc.exe")) {
 Unblock-File ".\frpc.exe" -ErrorAction SilentlyContinue
 
 @"
-serverAddr = "{{SERVER_HOST}}"
-serverPort = {{SERVER_PORT}}
-
-auth.method = "token"
-auth.token = "{{FRPS_AUTH_TOKEN}}"
-metadatas.token = "{{TOKEN}}"
-
-[[proxies]]
-name = "{{PROXY_NAME}}"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = $port
-remotePort = {{REMOTE_PORT}}
-transport.bandwidthLimit = "{{DEFAULT_SPEED_LIMIT_KBPS}}KB"
-transport.bandwidthLimitMode = "server"
+{{FRPC_CONFIG}}
 "@ | Set-Content -Encoding UTF8 frpc.toml
 
-Write-Host "启动 frpc, 公网端口 {{REMOTE_PORT}}, 本地端口 $port"
+Write-Host "启动 frpc"
 .\frpc.exe -c frpc.toml

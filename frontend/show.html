@@ -34,7 +34,7 @@
         <div class="rounded-lg overflow-hidden shadow-sm card-online">
           <div class="flex items-center justify-between px-3 py-2 border-b border-green-200 bg-green-50">
             <span class="font-medium text-sm truncate" x-text="p.name"></span>
-            <span class="text-xs text-gray-500 font-mono" x-text="p.remote_port"></span>
+            <span class="text-xs text-gray-500 font-mono" x-text="entryLabel(p)" :title="mappingDetails(p)"></span>
           </div>
           <div class="bg-white">
             <iframe :src="p.public_url"
@@ -95,6 +95,30 @@
           this.prevIds = [];
           await this.loadOnline();
           toast('已刷新');
+        },
+
+        tcpMappings(p) {
+          if (!p || p.proxy_type !== 'tcp') return [];
+          if (Array.isArray(p.tcp_mappings) && p.tcp_mappings.length) return p.tcp_mappings;
+          if (p.remote_port != null) return [{ remote_port: p.remote_port, local_port: null }];
+          return [];
+        },
+
+        entryLabel(p) {
+          if (p.proxy_type !== 'tcp') return 'HTTP';
+          var ports = this.tcpMappings(p).map(function (m) { return Number(m.remote_port); }).filter(function (n) { return n >= 1; });
+          if (!ports.length) return '-';
+          ports.sort(function (a, b) { return a - b; });
+          if (ports.length === 1) return String(ports[0]);
+          var contiguous = ports.every(function (port, idx) { return idx === 0 || port === ports[idx - 1] + 1; });
+          if (contiguous) return ports[0] + '-' + ports[ports.length - 1];
+          return ports.join(', ');
+        },
+
+        mappingDetails(p) {
+          return this.tcpMappings(p).map(function (m) {
+            return m.remote_port + ' -> ' + (m.local_port || '-');
+          }).join('\n');
         }
       };
     }

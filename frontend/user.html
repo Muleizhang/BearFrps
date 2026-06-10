@@ -74,8 +74,9 @@
         <thead>
           <tr class="bg-gray-50">
             <th>名称</th>
-            <th>公网端口</th>
-            <th>本地端口</th>
+            <th>类型</th>
+            <th>公网入口</th>
+            <th>本地服务</th>
             <th>状态</th>
             <th>已用 / 限额</th>
             <th>操作</th>
@@ -85,14 +86,20 @@
           <template x-for="p in proxies" :key="p.id">
             <tr :class="statusClass(p)">
               <td class="font-medium" x-text="p.name"></td>
-              <td class="font-mono text-sm">
+              <td>
+                <span class="status-badge"
+                      :class="p.proxy_type === 'http' ? 'badge-online' : 'badge-offline'"
+                      x-text="proxyTypeLabel(p)"></span>
+              </td>
+              <td class="font-mono text-sm max-w-[260px] truncate">
                 <a :href="p.public_url" target="_blank" rel="noopener"
                    class="text-blue-600 hover:text-blue-800 hover:underline transition-colors"
                    x-show="p.public_url"
-                   x-text="p.frps_remote_port"></a>
-                <span x-show="!p.public_url" x-text="p.frps_remote_port"></span>
+                   x-text="publicEntry(p)"
+                   :title="mappingDetails(p) || p.public_url"></a>
+                <span x-show="!p.public_url" x-text="publicEntry(p)" :title="mappingDetails(p)"></span>
               </td>
-              <td class="font-mono text-sm" x-text="p.actual_local_port != null ? p.actual_local_port : '-'"></td>
+              <td class="font-mono text-sm" x-text="localEndpoint(p)" :title="mappingDetails(p)"></td>
               <td>
                 <span class="status-badge" :class="statusBadge(p).cls" x-text="statusBadge(p).text"></span>
               </td>
@@ -114,7 +121,7 @@
             </tr>
           </template>
           <tr x-show="proxies.length === 0">
-            <td colspan="6" class="text-center text-gray-400 py-8">暂无连接，点击右上角申请</td>
+            <td colspan="7" class="text-center text-gray-400 py-8">暂无连接，点击右上角申请</td>
           </tr>
         </tbody>
       </table>
@@ -128,20 +135,116 @@
         <button @click="openCreateModal = false; createResult = null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
       </div>
       <div class="space-y-4" x-show="!createResult">
-        <div>
-          <label class="block text-sm font-medium text-gray-600 mb-1">名称</label>
-          <input class="input" x-model="createForm.name" placeholder="1-20 字符" maxlength="20">
+        <div class="flex gap-1 rounded-md bg-gray-100 p-1">
+          <button class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                  :class="createType === 'tcp' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                  @click="createType = 'tcp'; createError = ''">TCP 服务</button>
+          <button class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                  :class="createType === 'http' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                  @click="createType = 'http'; createError = ''">HTTP 服务</button>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-600 mb-1">
-            分配流量 (MB)
-            <span class="text-gray-400 font-normal" x-text="'(余额 ' + balance_mb + ' MB)'"></span>
-          </label>
-          <input class="input" type="number" x-model.number="createForm.traffic_mb" min="1" :max="balance_mb">
+
+        <div class="space-y-4" x-show="createType === 'tcp'">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">名称</label>
+            <input class="input" x-model="createForms.tcp.name" placeholder="1-20 字符" maxlength="20">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">本地地址</label>
+            <input class="input" x-model.trim="createForms.tcp.local_ip" placeholder="127.0.0.1">
+          </div>
+          <div class="flex gap-1 rounded-md bg-gray-100 p-1">
+            <button class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                    :class="createForms.tcp.port_mode === 'auto' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                    @click="createForms.tcp.port_mode = 'auto'; createError = ''">自动分配</button>
+            <button class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                    :class="createForms.tcp.port_mode === 'single' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                    @click="createForms.tcp.port_mode = 'single'; createError = ''">指定单端口</button>
+            <button class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                    :class="createForms.tcp.port_mode === 'range' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                    @click="createForms.tcp.port_mode = 'range'; createError = ''">指定端口段</button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3" x-show="createForms.tcp.port_mode === 'auto'">
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">端口数量</label>
+              <input class="input" type="number" x-model.number="createForms.tcp.count" min="1" max="10">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">本地起始端口</label>
+              <input class="input" type="number" x-model.number="createForms.tcp.local_start_port" min="1" max="65535">
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3" x-show="createForms.tcp.port_mode === 'single'">
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">公网端口</label>
+              <input class="input" type="number" x-model.number="createForms.tcp.remote_port" min="1" max="65535">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">本地端口</label>
+              <input class="input" type="number" x-model.number="createForms.tcp.local_port" min="1" max="65535">
+            </div>
+          </div>
+          <div class="space-y-3" x-show="createForms.tcp.port_mode === 'range'">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">公网起始端口</label>
+                <input class="input" type="number" x-model.number="createForms.tcp.remote_start_port" min="1" max="65535">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">公网结束端口</label>
+                <input class="input" type="number" x-model.number="createForms.tcp.remote_end_port" min="1" max="65535">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">本地起始端口</label>
+                <input class="input" type="number" x-model.number="createForms.tcp.range_local_start_port" min="1" max="65535">
+              </div>
+            </div>
+            <div class="text-xs font-mono bg-gray-50 border border-gray-200 rounded-md p-2 text-gray-600 whitespace-pre-line"
+                 x-text="tcpRangePreview()"></div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">
+              分配流量 (MB)
+              <span class="text-gray-400 font-normal" x-text="'(余额 ' + balance_mb + ' MB)'"></span>
+            </label>
+            <input class="input" type="number" x-model.number="createForms.tcp.traffic_mb" min="1" :max="balance_mb">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">限速 KB/s（可选，默认 1024）</label>
+            <input class="input" type="number" x-model.number="createForms.tcp.speed_limit_kbps" placeholder="1024">
+          </div>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-600 mb-1">限速 KB/s（可选，默认 1024）</label>
-          <input class="input" type="number" x-model.number="createForm.speed_limit_kbps" placeholder="1024">
+
+        <div class="space-y-4" x-show="createType === 'http'">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">名称</label>
+            <input class="input" x-model="createForms.http.name" placeholder="1-20 字符" maxlength="20">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">平台子域名前缀</label>
+            <input class="input font-mono" x-model.trim="createForms.http.subdomain" placeholder="my-site">
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">本地地址</label>
+              <input class="input" x-model.trim="createForms.http.local_ip" placeholder="127.0.0.1">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">本地端口</label>
+              <input class="input" type="number" x-model.number="createForms.http.local_port" min="1" max="65535">
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">
+              分配流量 (MB)
+              <span class="text-gray-400 font-normal" x-text="'(余额 ' + balance_mb + ' MB)'"></span>
+            </label>
+            <input class="input" type="number" x-model.number="createForms.http.traffic_mb" min="1" :max="balance_mb">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">限速 KB/s（可选，默认 1024）</label>
+            <input class="input" type="number" x-model.number="createForms.http.speed_limit_kbps" placeholder="1024">
+          </div>
         </div>
         <div x-show="createError" class="text-red-600 text-sm" x-text="createError"></div>
         <div class="flex justify-end gap-2">
@@ -151,6 +254,18 @@
       </div>
       <div x-show="createResult">
         <p class="text-green-600 mb-4 text-sm">连接创建成功！请查看下方配置和脚本。</p>
+        <div x-show="tcpMappings(createResult && createResult.proxy).length" class="mb-4 border border-gray-200 rounded-md overflow-hidden">
+          <div class="bg-gray-50 px-3 py-2 text-sm font-medium text-gray-600">TCP 端口映射</div>
+          <div class="divide-y divide-gray-100">
+            <template x-for="m in tcpMappings(createResult && createResult.proxy)" :key="m.frps_name">
+              <div class="px-3 py-2 text-xs font-mono flex items-center justify-between gap-3">
+                <span x-text="m.remote_port"></span>
+                <span class="text-gray-400">-&gt;</span>
+                <span x-text="((createResult && createResult.proxy && createResult.proxy.local_ip) || '127.0.0.1') + ':' + m.local_port"></span>
+              </div>
+            </template>
+          </div>
+        </div>
         <div x-data="{ mt: 'config', st: 'linux' }">
           <div class="flex border-b border-gray-200 mb-3">
             <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
@@ -195,6 +310,18 @@
         <button @click="openScriptModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
       </div>
       <div x-data="{ mt: 'config', st: 'linux' }">
+        <div x-show="tcpMappings(scriptData && scriptData.proxy).length" class="mb-4 border border-gray-200 rounded-md overflow-hidden">
+          <div class="bg-gray-50 px-3 py-2 text-sm font-medium text-gray-600">TCP 端口映射</div>
+          <div class="divide-y divide-gray-100">
+            <template x-for="m in tcpMappings(scriptData && scriptData.proxy)" :key="m.frps_name">
+              <div class="px-3 py-2 text-xs font-mono flex items-center justify-between gap-3">
+                <span x-text="m.remote_port"></span>
+                <span class="text-gray-400">-&gt;</span>
+                <span x-text="((scriptData && scriptData.proxy && scriptData.proxy.local_ip) || '127.0.0.1') + ':' + m.local_port"></span>
+              </div>
+            </template>
+          </div>
+        </div>
         <div class="flex border-b border-gray-200 mb-3">
           <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
             :class="mt === 'config' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
@@ -247,7 +374,24 @@
         recharging: false,
         openCreateModal: false,
         openScriptModal: false,
-        createForm: { name: '', traffic_mb: 0, speed_limit_kbps: 1024 },
+        createType: 'tcp',
+        createForms: {
+          tcp: {
+            name: '',
+            traffic_mb: 0,
+            speed_limit_kbps: 1024,
+            local_ip: '127.0.0.1',
+            port_mode: 'auto',
+            count: 1,
+            local_start_port: 9527,
+            remote_port: null,
+            local_port: 9527,
+            remote_start_port: null,
+            remote_end_port: null,
+            range_local_start_port: 9527
+          },
+          http: { name: '', traffic_mb: 0, speed_limit_kbps: 1024, local_ip: '127.0.0.1', local_port: 9527, subdomain: '' }
+        },
         createError: '',
         creating: false,
         createResult: null,
@@ -264,7 +408,7 @@
           this.username = data.username || '';
           this.balance_mb = data.balance_mb || 0;
           this.total_recharged_mb = data.total_recharged_mb || 0;
-          this.createForm.traffic_mb = this.balance_mb;
+          this.setCreateTraffic(this.balance_mb);
         },
 
         resetUserState() {
@@ -366,7 +510,7 @@
             const data = await res.json();
             this.balance_mb = data.balance_mb;
             this.total_recharged_mb = data.total_recharged_mb;
-            this.createForm.traffic_mb = this.balance_mb;
+            this.setCreateTraffic(this.balance_mb);
             toast('充值成功 +100MB');
           } finally {
             this.recharging = false;
@@ -375,21 +519,40 @@
 
         async createProxy() {
           this.createError = '';
-          if (!this.createForm.name.trim()) { this.createError = '请输入名称'; return; }
-          if (this.createForm.traffic_mb <= 0) { this.createError = '请输入流量额度'; return; }
+          const form = this.createForms[this.createType];
+          const payload = {
+            proxy_type: this.createType,
+            name: form.name,
+            traffic_mb: form.traffic_mb,
+            speed_limit_kbps: form.speed_limit_kbps,
+            local_ip: form.local_ip
+          };
+          if (!payload.name.trim()) { this.createError = '请输入名称'; return; }
+          if (payload.traffic_mb <= 0) { this.createError = '请输入流量额度'; return; }
+          if (payload.proxy_type === 'tcp') {
+            const tcpPorts = this.buildTcpPortsPayload(form);
+            if (!tcpPorts) return;
+            payload.tcp_ports = tcpPorts;
+          } else {
+            payload.local_port = form.local_port;
+            payload.subdomain = form.subdomain;
+            if (!payload.local_port || payload.local_port < 1 || payload.local_port > 65535) { this.createError = '请输入有效本地端口'; return; }
+            if (!payload.subdomain.trim()) { this.createError = '请输入子域名前缀'; return; }
+          }
           this.creating = true;
           try {
             const res = await fetch('/api/proxies', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               credentials: 'same-origin',
-              body: JSON.stringify(this.createForm)
+              body: JSON.stringify(payload)
             });
             if (this.handleUnauthorized(res)) return;
             const data = await res.json();
             if (!res.ok) { this.createError = extractDetail(data) || '创建失败'; return; }
             this.createResult = data;
-            this.balance_mb -= this.createForm.traffic_mb;
+            this.balance_mb -= payload.traffic_mb;
+            this.setCreateTraffic(this.balance_mb);
             toast('连接创建成功');
           } finally {
             this.creating = false;
@@ -415,6 +578,155 @@
         trafficPercent(p) {
           if (!p.traffic_limit_mb) return 0;
           return (p.traffic_used_bytes / (p.traffic_limit_mb * 1024 * 1024)) * 100;
+        },
+
+        setCreateTraffic(value) {
+          this.createForms.tcp.traffic_mb = value;
+          this.createForms.http.traffic_mb = value;
+        },
+
+        proxyTypeLabel(p) {
+          return p.proxy_type === 'http' ? 'HTTP' : 'TCP';
+        },
+
+        publicEntry(p) {
+          if (p.proxy_type === 'tcp') {
+            var mappings = this.tcpMappings(p);
+            if (mappings.length) {
+              var host = this.publicHost(p);
+              return host ? host + ':' + this.remotePortSummary(p) : this.remotePortSummary(p);
+            }
+            if (p.frps_remote_port != null) return String(p.frps_remote_port);
+          }
+          if (p.public_url) return p.public_url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+          return '-';
+        },
+
+        localEndpoint(p) {
+          var ip = p.local_ip || '127.0.0.1';
+          if (p.proxy_type === 'tcp') {
+            var mappings = this.tcpMappings(p);
+            if (mappings.length) return ip + ':' + this.localPortSummary(mappings);
+          }
+          var port = p.actual_local_port != null ? p.actual_local_port : p.local_port;
+          return port != null ? ip + ':' + port : ip + ':-';
+        },
+
+        buildTcpPortsPayload(form) {
+          var mode = form.port_mode || 'auto';
+          if (mode === 'auto') {
+            var count = Number(form.count || 1);
+            var localStart = Number(form.local_start_port || 0);
+            if (!this.validateTcpCount(count)) return null;
+            if (!this.validatePort(localStart, '本地起始端口')) return null;
+            if (!this.validateLocalRange(localStart, count)) return null;
+            return { mode: 'auto', count: count, local_start_port: localStart };
+          }
+          if (mode === 'single') {
+            var remotePort = Number(form.remote_port || 0);
+            var localPort = Number(form.local_port || 0);
+            if (!this.validatePort(remotePort, '公网端口')) return null;
+            if (!this.validatePort(localPort, '本地端口')) return null;
+            return { mode: 'single', remote_port: remotePort, local_port: localPort };
+          }
+          var remoteStart = Number(form.remote_start_port || 0);
+          var remoteEnd = Number(form.remote_end_port || 0);
+          var rangeLocalStart = Number(form.range_local_start_port || 0);
+          if (!this.validatePort(remoteStart, '公网起始端口')) return null;
+          if (!this.validatePort(remoteEnd, '公网结束端口')) return null;
+          if (!this.validatePort(rangeLocalStart, '本地起始端口')) return null;
+          if (remoteStart > remoteEnd) { this.createError = '公网起始端口不能大于结束端口'; return null; }
+          var rangeCount = remoteEnd - remoteStart + 1;
+          if (!this.validateTcpCount(rangeCount)) return null;
+          if (!this.validateLocalRange(rangeLocalStart, rangeCount)) return null;
+          return {
+            mode: 'range',
+            remote_start_port: remoteStart,
+            remote_end_port: remoteEnd,
+            local_start_port: rangeLocalStart
+          };
+        },
+
+        validatePort(value, label) {
+          if (!value || value < 1 || value > 65535) {
+            this.createError = '请输入有效' + label;
+            return false;
+          }
+          return true;
+        },
+
+        validateTcpCount(count) {
+          if (!count || count < 1 || count > 10) {
+            this.createError = '单个 TCP 配置最多 10 个端口';
+            return false;
+          }
+          return true;
+        },
+
+        validateLocalRange(start, count) {
+          if (start + count - 1 > 65535) {
+            this.createError = '本地端口段必须在 1-65535 之间';
+            return false;
+          }
+          return true;
+        },
+
+        tcpRangePreview() {
+          var f = this.createForms.tcp;
+          var start = Number(f.remote_start_port || 0);
+          var end = Number(f.remote_end_port || 0);
+          var local = Number(f.range_local_start_port || 0);
+          if (!start || !end || !local) return '填写端口段后显示映射预览';
+          if (start > end) return '公网起始端口不能大于结束端口';
+          var count = end - start + 1;
+          if (count > 10) return '单个 TCP 配置最多 10 个端口';
+          if (local + count - 1 > 65535) return '本地端口段必须在 1-65535 之间';
+          var lines = [];
+          for (var i = 0; i < count; i++) lines.push((start + i) + ' -> ' + (local + i));
+          return lines.join('\n');
+        },
+
+        tcpMappings(p) {
+          if (!p || p.proxy_type !== 'tcp') return [];
+          if (Array.isArray(p.tcp_mappings) && p.tcp_mappings.length) return p.tcp_mappings;
+          if (p.frps_remote_port != null) {
+            return [{ remote_port: p.frps_remote_port, local_port: p.local_port, actual_local_port: p.actual_local_port }];
+          }
+          return [];
+        },
+
+        remotePortSummary(p) {
+          var mappings = this.tcpMappings(p);
+          return this.portSummary(mappings.map(function (m) { return m.remote_port; }));
+        },
+
+        localPortSummary(mappings) {
+          return this.portSummary(mappings.map(function (m) {
+            return m.actual_local_port != null ? m.actual_local_port : m.local_port;
+          }));
+        },
+
+        portSummary(ports) {
+          var nums = ports.map(Number).filter(function (n) { return n >= 1; });
+          if (!nums.length) return '-';
+          nums.sort(function (a, b) { return a - b; });
+          if (nums.length === 1) return String(nums[0]);
+          var contiguous = nums.every(function (port, idx) { return idx === 0 || port === nums[idx - 1] + 1; });
+          if (contiguous) return nums[0] + '-' + nums[nums.length - 1];
+          return nums.join(', ');
+        },
+
+        mappingDetails(p) {
+          var ip = (p && p.local_ip) || '127.0.0.1';
+          return this.tcpMappings(p).map(function (m) {
+            return m.remote_port + ' -> ' + ip + ':' + m.local_port;
+          }).join('\n');
+        },
+
+        publicHost(p) {
+          if (!p || !p.public_url) return '';
+          try { return new URL(p.public_url).hostname; }
+          catch (e) { return ''; }
         }
       };
     }

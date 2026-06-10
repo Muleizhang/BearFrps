@@ -2,9 +2,6 @@
 set -e
 
 echo "=== frpc 启动脚本 ==="
-printf "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: "
-read PORT
-PORT=${PORT:-{{DEFAULT_LOCAL_PORT}}}
 FRP_VERSION="{{FRP_VERSION}}"
 FRP_VERSION_NOV=${FRP_VERSION#v}
 
@@ -30,22 +27,8 @@ if [ ! -f frpc ]; then
 fi
 
 cat > frpc.toml <<EOF
-serverAddr = "{{SERVER_HOST}}"
-serverPort = {{SERVER_PORT}}
-
-auth.method = "token"
-auth.token = "{{FRPS_AUTH_TOKEN}}"
-metadatas.token = "{{TOKEN}}"
-
-[[proxies]]
-name = "{{PROXY_NAME}}"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = ${PORT}
-remotePort = {{REMOTE_PORT}}
-transport.bandwidthLimit = "{{DEFAULT_SPEED_LIMIT_KBPS}}KB"
-transport.bandwidthLimitMode = "server"
+{{FRPC_CONFIG}}
 EOF
 
-echo "启动 frpc, 公网端口 {{REMOTE_PORT}}, 本地端口 ${PORT}"
+echo "启动 frpc"
 ./frpc -c frpc.toml

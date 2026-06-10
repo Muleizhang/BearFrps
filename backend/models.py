@@ -6,13 +6,28 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ProxyStatus(StrEnum):
     ACTIVE = "active"
     STOPPED_BY_ADMIN = "stopped_by_admin"
     DELETED = "deleted"
+
+
+class ProxyType(StrEnum):
+    TCP = "tcp"
+    HTTP = "http"
+
+
+class TcpMapping(BaseModel):
+    frps_name: str
+    remote_port: int
+    local_port: int
+    is_online: bool = False
+    actual_local_port: int | None = None
+    current_speed_bps: int = 0
+    last_frps_total_bytes: int | None = None
 
 
 def now_utc() -> datetime:
@@ -42,7 +57,12 @@ class Proxy(BaseModel):
     name: str
     frps_name: str
     token: str
-    frps_remote_port: int
+    proxy_type: ProxyType = ProxyType.TCP
+    frps_remote_port: int | None = None
+    local_ip: str = "127.0.0.1"
+    local_port: int = 9527
+    subdomain: str | None = None
+    tcp_mappings: list[TcpMapping] = Field(default_factory=list)
     actual_local_port: int | None = None
     status: ProxyStatus = ProxyStatus.ACTIVE
     is_online: bool = False
@@ -53,6 +73,30 @@ class Proxy(BaseModel):
     created_at: datetime = Field(default_factory=now_utc)
     last_seen_at: datetime | None = None
     last_frps_total_bytes: int | None = None
+
+    @model_validator(mode="after")
+    def normalize_tcp_mappings(self) -> Proxy:
+        if self.proxy_type != ProxyType.TCP:
+            self.tcp_mappings = []
+            return self
+        if not self.tcp_mappings and self.frps_remote_port is not None:
+            self.tcp_mappings = [
+                TcpMapping(
+                    frps_name=self.frps_name,
+                    remote_port=self.frps_remote_port,
+                    local_port=self.local_port,
+                    is_online=self.is_online,
+                    actual_local_port=self.actual_local_port,
+                    current_speed_bps=self.current_speed_bps,
+                    last_frps_total_bytes=self.last_frps_total_bytes,
+                )
+            ]
+        if self.tcp_mappings:
+            first = self.tcp_mappings[0]
+            self.frps_remote_port = first.remote_port
+            self.local_port = first.local_port
+            self.actual_local_port = first.actual_local_port
+        return self
 
 
 class RechargeLog(BaseModel):
@@ -116,7 +160,26 @@ class Store:
         if port is None:
             return None
         for proxy in self.proxies.values():
-            if proxy.frps_remote_port == port and proxy.status != ProxyStatus.DELETED:
+            if (
+                proxy.proxy_type == ProxyType.TCP
+                and any(mapping.remote_port == port for mapping in proxy.tcp_mappings)
+                and proxy.status != ProxyStatus.DELETED
+            ):
+                return proxy
+        return None
+
+    def find_proxy_by_subdomain_unlocked(
+        self, subdomain: str | None, exclude_id: int | None = None
+    ) -> Proxy | None:
+        if not subdomain:
+            return None
+        for proxy in self.proxies.values():
+            if (
+                proxy.proxy_type == ProxyType.HTTP
+                and proxy.subdomain == subdomain
+                and proxy.status != ProxyStatus.DELETED
+                and proxy.id != exclude_id
+            ):
                 return proxy
         return None
 
@@ -124,7 +187,14 @@ class Store:
         if not frps_name:
             return None
         for proxy in self.proxies.values():
-            if proxy.frps_name == frps_name and proxy.status != ProxyStatus.DELETED:
+            if proxy.status == ProxyStatus.DELETED:
+                continue
+            if proxy.frps_name == frps_name:
+                return proxy
+            if (
+                proxy.proxy_type == ProxyType.TCP
+                and any(mapping.frps_name == frps_name for mapping in proxy.tcp_mappings)
+            ):
                 return proxy
         return None
 
@@ -145,11 +215,17 @@ class Store:
         )
 
     def proxy_to_dto(self, proxy: Proxy) -> dict[str, Any]:
+        tcp_mappings = [_tcp_mapping_to_dto(mapping) for mapping in proxy.tcp_mappings]
         return {
             "id": proxy.id,
             "name": proxy.name,
             "token": proxy.token,
+            "proxy_type": proxy.proxy_type.value,
             "frps_remote_port": proxy.frps_remote_port,
+            "local_ip": proxy.local_ip,
+            "local_port": proxy.local_port,
+            "subdomain": proxy.subdomain,
+            "tcp_mappings": tcp_mappings,
             "actual_local_port": proxy.actual_local_port,
             "status": proxy.status.value,
             "is_online": proxy.is_online,
@@ -175,6 +251,17 @@ class Store:
             "total_recharged_mb": user.total_recharged_mb,
             "connection_count": self.active_connection_count_unlocked(user.uid),
         }
+
+
+def _tcp_mapping_to_dto(mapping: TcpMapping) -> dict[str, Any]:
+    return {
+        "frps_name": mapping.frps_name,
+        "remote_port": mapping.remote_port,
+        "local_port": mapping.local_port,
+        "is_online": mapping.is_online,
+        "actual_local_port": mapping.actual_local_port,
+        "current_speed_bps": mapping.current_speed_bps,
+    }
 
 
 store = Store()

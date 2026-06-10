@@ -11,7 +11,7 @@ from backend.auth import (
     require_admin,
 )
 from backend.deps import persist_port_range, port_pool, settings
-from backend.models import ProxyStatus, store
+from backend.models import ProxyStatus, ProxyType, store
 
 
 router = APIRouter(prefix="/api/admin")
@@ -59,9 +59,13 @@ async def update_config(body: UpdateAllocatableRangeRequest) -> dict[str, bool]:
         raise HTTPException(status_code=400, detail="起始端口不能大于结束端口")
     async with store.lock:
         currently_allocated = {
-            p.frps_remote_port
+            mapping.remote_port
             for p in store.proxies.values()
-            if p.status != ProxyStatus.DELETED
+            for mapping in p.tcp_mappings
+            if (
+                p.proxy_type == ProxyType.TCP
+                and p.status != ProxyStatus.DELETED
+            )
         }
         outside = {
             p for p in currently_allocated
@@ -86,7 +90,25 @@ async def list_admin_proxies() -> dict[str, list[dict[str, object]]]:
         ]
     host = settings.server_public_host
     for p in proxies:
-        p["public_url"] = f"http://{host}:{p['frps_remote_port']}/"
+        if p.get("proxy_type") == ProxyType.HTTP.value:
+            port = settings.frps_vhost_http_port
+            port_part = "" if port == 80 else f":{port}"
+            p["public_url"] = (
+                f"http://{p['subdomain']}.{settings.effective_subdomain_host}{port_part}/"
+                if p.get("subdomain")
+                else None
+            )
+            p["public_urls"] = [p["public_url"]] if p["public_url"] else []
+        else:
+            public_urls = [
+                f"http://{host}:{mapping['remote_port']}/"
+                for mapping in p.get("tcp_mappings", [])
+                if isinstance(mapping, dict) and mapping.get("remote_port") is not None
+            ]
+            if not public_urls and p.get("frps_remote_port") is not None:
+                public_urls.append(f"http://{host}:{p['frps_remote_port']}/")
+            p["public_urls"] = public_urls
+            p["public_url"] = public_urls[0] if public_urls else None
     return {"proxies": proxies}
 
 
@@ -118,11 +140,20 @@ async def start_proxy(proxy_id: int) -> dict[str, bool]:
         user = store.users.get(proxy.uid)
         if user is None or user.balance_mb <= 0:
             raise HTTPException(status_code=400, detail="余额不足")
-        owner = store.find_proxy_by_remote_port_unlocked(proxy.frps_remote_port)
-        if owner is not None and owner.id != proxy.id:
-            raise HTTPException(status_code=400, detail="端口已被占用")
-        if port_pool.is_port_available(proxy.frps_remote_port):
-            port_pool.reserve(proxy.frps_remote_port)
+        if proxy.proxy_type == ProxyType.TCP:
+            occupied = []
+            remote_ports = [mapping.remote_port for mapping in proxy.tcp_mappings]
+            for remote_port in remote_ports:
+                owner = store.find_proxy_by_remote_port_unlocked(remote_port)
+                if owner is not None and owner.id != proxy.id:
+                    occupied.append(remote_port)
+            if occupied:
+                raise HTTPException(status_code=400, detail=f"端口已被占用: {sorted(occupied)}")
+            to_reserve = [port for port in remote_ports if port_pool.is_port_unreserved(port)]
+            if to_reserve:
+                unavailable = port_pool.reserve_many(to_reserve)
+                if unavailable:
+                    raise HTTPException(status_code=400, detail=f"公网端口不可用: {sorted(unavailable)}")
         proxy.status = ProxyStatus.ACTIVE
     return {"ok": True}
 
@@ -133,5 +164,6 @@ async def delete_proxy(proxy_id: int) -> dict[str, bool]:
         proxy = store.proxies.pop(proxy_id, None)
         if proxy is None:
             raise HTTPException(status_code=404, detail="proxy not found")
-        port_pool.release(proxy.frps_remote_port)
+        if proxy.proxy_type == ProxyType.TCP:
+            port_pool.release_many([mapping.remote_port for mapping in proxy.tcp_mappings])
     return {"ok": True}

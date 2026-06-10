@@ -45,6 +45,8 @@ def test_user_lifecycle_and_scripts():
         body = created.json()
         assert body["proxy"]["name"] == "demo"
         assert body["proxy"]["frps_remote_port"] == settings.allocatable_port_range_start
+        assert body["proxy"]["tcp_mappings"][0]["remote_port"] == settings.allocatable_port_range_start
+        assert body["proxy"]["public_urls"] == [body["proxy"]["public_url"]]
         assert "metadatas.token" in body["frpc_config"]
         assert body["scripts"]["frpc"]["linux"]
         assert client.get("/api/user/me").json()["balance_mb"] == settings.free_recharge_amount_mb - 10
@@ -60,6 +62,224 @@ def test_user_lifecycle_and_scripts():
         deleted = client.delete(f"/api/proxies/{body['proxy']['id']}")
         assert deleted.status_code == 200
         assert deleted.json() == {"ok": True}
+
+
+def test_create_tcp_auto_multiple_ports():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "game",
+                "traffic_mb": 10,
+                "speed_limit_kbps": 512,
+                "local_ip": "127.0.0.1",
+                "tcp_ports": {
+                    "mode": "auto",
+                    "count": 3,
+                    "local_start_port": 8000,
+                },
+            },
+        )
+        assert created.status_code == 200
+        body = created.json()
+        mappings = body["proxy"]["tcp_mappings"]
+        assert [m["remote_port"] for m in mappings] == [
+            settings.allocatable_port_range_start,
+            settings.allocatable_port_range_start + 1,
+            settings.allocatable_port_range_start + 2,
+        ]
+        assert [m["local_port"] for m in mappings] == [8000, 8001, 8002]
+        assert body["proxy"]["frps_remote_port"] == settings.allocatable_port_range_start
+        assert body["proxy"]["local_port"] == 8000
+        assert len(body["proxy"]["public_urls"]) == 3
+        assert body["frpc_config"].count("[[proxies]]") == 3
+        assert "remotePort = 50000" in body["frpc_config"]
+        assert "localPort = 8002" in body["frpc_config"]
+
+
+def test_create_tcp_single_port_and_occupied_failure():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+        port = settings.allocatable_port_range_start + 10
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "ssh",
+                "traffic_mb": 1,
+                "tcp_ports": {
+                    "mode": "single",
+                    "remote_port": port,
+                    "local_port": 22,
+                },
+            },
+        )
+        assert created.status_code == 200
+        assert created.json()["proxy"]["frps_remote_port"] == port
+        assert created.json()["proxy"]["local_port"] == 22
+
+        duplicate = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "ssh2",
+                "traffic_mb": 1,
+                "tcp_ports": {
+                    "mode": "single",
+                    "remote_port": port,
+                    "local_port": 2222,
+                },
+            },
+        )
+        assert duplicate.status_code == 400
+        assert str(port) in duplicate.json()["detail"]
+
+
+def test_create_tcp_range_validation_and_release():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+        start = settings.allocatable_port_range_start + 20
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "range",
+                "traffic_mb": 1,
+                "tcp_ports": {
+                    "mode": "range",
+                    "remote_start_port": start,
+                    "remote_end_port": start + 2,
+                    "local_start_port": 9000,
+                },
+            },
+        )
+        assert created.status_code == 200
+        proxy_id = created.json()["proxy"]["id"]
+        assert [m["remote_port"] for m in created.json()["proxy"]["tcp_mappings"]] == [
+            start,
+            start + 1,
+            start + 2,
+        ]
+
+        partial_conflict = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "range2",
+                "traffic_mb": 1,
+                "tcp_ports": {
+                    "mode": "range",
+                    "remote_start_port": start + 2,
+                    "remote_end_port": start + 3,
+                    "local_start_port": 9100,
+                },
+            },
+        )
+        assert partial_conflict.status_code == 400
+        assert str(start + 2) in partial_conflict.json()["detail"]
+
+        too_many = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "too-many",
+                "traffic_mb": 1,
+                "tcp_ports": {
+                    "mode": "auto",
+                    "count": settings.max_tcp_ports_per_proxy + 1,
+                    "local_start_port": 9200,
+                },
+            },
+        )
+        assert too_many.status_code == 400
+
+        local_overflow = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "overflow",
+                "traffic_mb": 1,
+                "tcp_ports": {
+                    "mode": "range",
+                    "remote_start_port": start + 10,
+                    "remote_end_port": start + 11,
+                    "local_start_port": 65535,
+                },
+            },
+        )
+        assert local_overflow.status_code == 400
+
+        deleted = client.delete(f"/api/proxies/{proxy_id}")
+        assert deleted.status_code == 200
+        recreated = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "range3",
+                "traffic_mb": 1,
+                "tcp_ports": {
+                    "mode": "range",
+                    "remote_start_port": start,
+                    "remote_end_port": start + 2,
+                    "local_start_port": 9300,
+                },
+            },
+        )
+        assert recreated.status_code == 200
+
+
+def test_create_http_proxy_and_scripts():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "http",
+                "name": "site",
+                "traffic_mb": 10,
+                "speed_limit_kbps": 256,
+                "local_ip": "localhost",
+                "local_port": 8080,
+                "subdomain": "site",
+            },
+        )
+        assert created.status_code == 200
+        body = created.json()
+        assert body["proxy"]["proxy_type"] == "http"
+        assert body["proxy"]["frps_remote_port"] is None
+        assert body["proxy"]["local_ip"] == "localhost"
+        assert body["proxy"]["local_port"] == 8080
+        assert body["proxy"]["subdomain"] == "site"
+        assert body["proxy"]["public_url"].startswith("http://site.")
+        assert f":{settings.frps_vhost_http_port}/" in body["proxy"]["public_url"]
+        assert 'type = "http"' in body["frpc_config"]
+        assert 'localIP = "localhost"' in body["frpc_config"]
+        assert "localPort = 8080" in body["frpc_config"]
+        assert 'subdomain = "site"' in body["frpc_config"]
+        assert "remotePort" not in body["frpc_config"]
+        assert 'type = "http"' in body["scripts"]["frpc"]["linux"]
+
+        duplicate = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "http",
+                "name": "site2",
+                "traffic_mb": 1,
+                "local_port": 8081,
+                "subdomain": "site",
+            },
+        )
+        assert duplicate.status_code == 400
 
 
 def test_user_auth_login_logout_and_persistence():
@@ -289,6 +509,38 @@ def test_admin_config_update_rejects_when_proxy_outside_new_range():
         assert "新区间不覆盖" in bad.json()["detail"]
 
 
+def test_admin_port_range_ignores_http_proxies():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "http",
+                "name": "site",
+                "traffic_mb": 1,
+                "local_port": 8080,
+                "subdomain": "site",
+            },
+        )
+        assert created.status_code == 200
+        proxy_id = created.json()["proxy"]["id"]
+
+        ok = client.post(
+            "/api/admin/login",
+            json={"username": settings.admin_username, "password": settings.admin_password},
+        )
+        assert ok.status_code == 200
+
+        put = client.put("/api/admin/config", json={"start": 50010, "end": 50020})
+        assert put.status_code == 200
+
+        stopped = client.post(f"/api/admin/proxies/{proxy_id}/stop")
+        assert stopped.status_code == 200
+        started = client.post(f"/api/admin/proxies/{proxy_id}/start")
+        assert started.status_code == 200
+
+
 def test_port_pool_update_range():
     from backend.port_pool import PortPool
     pool = PortPool(50000, 50003)
@@ -305,6 +557,20 @@ def test_port_pool_update_range():
 
     p3 = pool.allocate()
     assert p3 == 50002
+
+
+def test_port_pool_batch_allocate_reserve_release():
+    from backend.port_pool import PortPool
+    pool = PortPool(50000, 50005)
+
+    assert pool.allocate_contiguous(3) == [50000, 50001, 50002]
+    assert pool.reserve_many([50004, 50005]) == []
+    assert pool.reserve_many([50003, 50004]) == [50004]
+    assert pool.allocate() == 50003
+    assert pool.allocate() is None
+
+    pool.release_many([50001, 50002])
+    assert pool.allocate_contiguous(2) == [50001, 50002]
 
 
 def test_port_pool_skips_in_use_port(monkeypatch):

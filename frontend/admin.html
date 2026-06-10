@@ -80,9 +80,10 @@
                 <tr class="bg-gray-50">
                   <th>UID</th>
                   <th>名称</th>
-                  <th>公网端口</th>
+                  <th>类型</th>
+                  <th>公网入口</th>
                   <th>Token</th>
-                  <th>本地端口</th>
+                  <th>本地服务</th>
                   <th>限速</th>
                   <th>已用 / 限额</th>
                   <th>当前速率</th>
@@ -95,15 +96,21 @@
                   <tr :class="statusClass(p)">
                     <td class="font-mono text-xs" x-text="p.uid"></td>
                     <td class="font-medium" x-text="p.name"></td>
-                    <td class="font-mono text-sm">
+                    <td>
+                      <span class="status-badge"
+                            :class="p.proxy_type === 'http' ? 'badge-online' : 'badge-offline'"
+                            x-text="proxyTypeLabel(p)"></span>
+                    </td>
+                    <td class="font-mono text-sm max-w-[260px] truncate">
                       <a :href="p.public_url" target="_blank" rel="noopener"
                          class="text-blue-600 hover:text-blue-800 hover:underline transition-colors"
                          x-show="p.public_url"
-                         x-text="p.frps_remote_port"></a>
-                      <span x-show="!p.public_url" x-text="p.frps_remote_port"></span>
+                         x-text="publicEntry(p)"
+                         :title="mappingDetails(p) || p.public_url"></a>
+                      <span x-show="!p.public_url" x-text="publicEntry(p)" :title="mappingDetails(p)"></span>
                     </td>
                     <td class="font-mono text-xs text-gray-500 max-w-[120px] truncate" x-text="p.token" :title="p.token"></td>
-                    <td class="font-mono text-sm" x-text="p.actual_local_port != null ? p.actual_local_port : '-'"></td>
+                    <td class="font-mono text-sm" x-text="localEndpoint(p)" :title="mappingDetails(p)"></td>
                     <td class="text-sm" x-text="p.speed_limit_kbps + ' KB/s'"></td>
                     <td>
                       <div class="flex items-center gap-2">
@@ -132,7 +139,7 @@
                   </tr>
                 </template>
                 <tr x-show="filteredProxies.length === 0">
-                  <td colspan="10" class="text-center text-gray-400 py-8">暂无数据</td>
+                  <td colspan="11" class="text-center text-gray-400 py-8">暂无数据</td>
                 </tr>
               </tbody>
             </table>
@@ -290,7 +297,7 @@
         },
 
         async deleteProxy(p) {
-          if (!confirm('确定删除 "' + p.name + '"？端口将被释放。')) return;
+          if (!confirm('确定删除 "' + p.name + '"？')) return;
           await fetch('/api/admin/proxies/' + p.id, { method: 'DELETE', credentials: 'same-origin' });
           await this.loadProxies();
           toast('已删除');
@@ -366,6 +373,76 @@
         trafficPercent(p) {
           if (!p.traffic_limit_mb) return 0;
           return (p.traffic_used_bytes / (p.traffic_limit_mb * 1024 * 1024)) * 100;
+        },
+
+        proxyTypeLabel(p) {
+          return p.proxy_type === 'http' ? 'HTTP' : 'TCP';
+        },
+
+        publicEntry(p) {
+          if (p.proxy_type === 'tcp') {
+            var mappings = this.tcpMappings(p);
+            if (mappings.length) {
+              var host = this.publicHost(p);
+              return host ? host + ':' + this.remotePortSummary(p) : this.remotePortSummary(p);
+            }
+            if (p.frps_remote_port != null) return String(p.frps_remote_port);
+          }
+          if (p.public_url) return p.public_url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+          return '-';
+        },
+
+        localEndpoint(p) {
+          var ip = p.local_ip || '127.0.0.1';
+          if (p.proxy_type === 'tcp') {
+            var mappings = this.tcpMappings(p);
+            if (mappings.length) return ip + ':' + this.localPortSummary(mappings);
+          }
+          var port = p.actual_local_port != null ? p.actual_local_port : p.local_port;
+          return port != null ? ip + ':' + port : ip + ':-';
+        },
+
+        tcpMappings(p) {
+          if (!p || p.proxy_type !== 'tcp') return [];
+          if (Array.isArray(p.tcp_mappings) && p.tcp_mappings.length) return p.tcp_mappings;
+          if (p.frps_remote_port != null) {
+            return [{ remote_port: p.frps_remote_port, local_port: p.local_port, actual_local_port: p.actual_local_port }];
+          }
+          return [];
+        },
+
+        remotePortSummary(p) {
+          var mappings = this.tcpMappings(p);
+          return this.portSummary(mappings.map(function (m) { return m.remote_port; }));
+        },
+
+        localPortSummary(mappings) {
+          return this.portSummary(mappings.map(function (m) {
+            return m.actual_local_port != null ? m.actual_local_port : m.local_port;
+          }));
+        },
+
+        portSummary(ports) {
+          var nums = ports.map(Number).filter(function (n) { return n >= 1; });
+          if (!nums.length) return '-';
+          nums.sort(function (a, b) { return a - b; });
+          if (nums.length === 1) return String(nums[0]);
+          var contiguous = nums.every(function (port, idx) { return idx === 0 || port === nums[idx - 1] + 1; });
+          if (contiguous) return nums[0] + '-' + nums[nums.length - 1];
+          return nums.join(', ');
+        },
+
+        mappingDetails(p) {
+          var ip = (p && p.local_ip) || '127.0.0.1';
+          return this.tcpMappings(p).map(function (m) {
+            return m.remote_port + ' -> ' + ip + ':' + m.local_port;
+          }).join('\n');
+        },
+
+        publicHost(p) {
+          if (!p || !p.public_url) return '';
+          try { return new URL(p.public_url).hostname; }
+          catch (e) { return ''; }
         }
       };
     }

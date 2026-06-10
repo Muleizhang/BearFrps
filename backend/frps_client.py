@@ -16,6 +16,11 @@ class FrpsClient:
         proxies = data.get("proxies", [])
         return proxies if isinstance(proxies, list) else []
 
+    async def list_http_proxies(self) -> list[dict[str, Any]]:
+        data = await self._get_json("/api/proxy/http")
+        proxies = data.get("proxies", [])
+        return proxies if isinstance(proxies, list) else []
+
     async def get_proxy_traffic(self, name: str) -> dict[str, Any]:
         return await self._get_json(f"/api/traffic/{name}")
 

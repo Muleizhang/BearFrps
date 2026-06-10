@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Annotated
+import re
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -16,23 +17,64 @@ from backend.auth import (
     verify_password,
 )
 from backend.deps import port_pool, settings
-from backend.models import Proxy, ProxyStatus, User, new_token, store
+from backend.models import Proxy, ProxyStatus, ProxyType, TcpMapping, User, new_token, store
 from backend.script_renderer import script_renderer
 from backend.user_persistence import save_registered_users_unlocked
 
 
 def _add_public_url(dto: dict[str, object]) -> dict[str, object]:
-    dto["public_url"] = f"http://{settings.server_public_host}:{dto['frps_remote_port']}/"
+    if dto.get("proxy_type") == ProxyType.HTTP.value:
+        subdomain = dto.get("subdomain")
+        if subdomain:
+            port = settings.frps_vhost_http_port
+            port_part = "" if port == 80 else f":{port}"
+            dto["public_url"] = (
+                f"http://{subdomain}.{settings.effective_subdomain_host}{port_part}/"
+            )
+        else:
+            dto["public_url"] = None
+        dto["public_urls"] = [dto["public_url"]] if dto["public_url"] else []
+    else:
+        public_urls = []
+        mappings = dto.get("tcp_mappings")
+        if isinstance(mappings, list):
+            for mapping in mappings:
+                if isinstance(mapping, dict) and mapping.get("remote_port") is not None:
+                    public_urls.append(
+                        f"http://{settings.server_public_host}:{mapping['remote_port']}/"
+                    )
+        remote_port = dto.get("frps_remote_port")
+        if not public_urls and remote_port is not None:
+            public_urls.append(f"http://{settings.server_public_host}:{remote_port}/")
+        dto["public_urls"] = public_urls
+        dto["public_url"] = public_urls[0] if public_urls else None
     return dto
 
 
 router = APIRouter()
+_LOCAL_IP_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
+_SUBDOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$")
+
+
+class TcpPortsRequest(BaseModel):
+    mode: Literal["auto", "single", "range"] = "auto"
+    count: int | None = Field(default=None, ge=1)
+    local_start_port: int | None = Field(default=None, ge=1, le=65535)
+    remote_port: int | None = Field(default=None, ge=1, le=65535)
+    local_port: int | None = Field(default=None, ge=1, le=65535)
+    remote_start_port: int | None = Field(default=None, ge=1, le=65535)
+    remote_end_port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class CreateProxyRequest(BaseModel):
     name: str = Field(min_length=1, max_length=20)
+    proxy_type: ProxyType = ProxyType.TCP
     traffic_mb: int = Field(gt=0)
     speed_limit_kbps: int | None = Field(default=None, gt=0)
+    local_ip: str | None = None
+    local_port: int | None = Field(default=None, ge=1, le=65535)
+    subdomain: str | None = None
+    tcp_ports: TcpPortsRequest | None = None
 
 
 class UserAuthRequest(BaseModel):
@@ -116,6 +158,9 @@ async def create_proxy(
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="名称不能为空")
+    local_ip = _normalize_local_ip(body.local_ip)
+    local_port = body.local_port or settings.default_local_port
+    subdomain = _normalize_subdomain(body.subdomain) if body.proxy_type == ProxyType.HTTP else None
 
     async with store.lock:
         current = store.ensure_user_unlocked(user.uid)
@@ -126,18 +171,42 @@ async def create_proxy(
         if store.active_connection_count_unlocked(current.uid) >= settings.max_connections_per_user:
             raise HTTPException(status_code=400, detail="超过最大连接数")
 
-        remote_port = port_pool.allocate()
-        if remote_port is None:
-            raise HTTPException(status_code=400, detail="端口池满")
+        remote_port = None
+        tcp_mappings: list[TcpMapping] = []
+        if body.proxy_type == ProxyType.TCP:
+            remote_ports, local_ports = _allocate_tcp_ports(body, local_port)
+        elif store.find_proxy_by_subdomain_unlocked(subdomain):
+            raise HTTPException(status_code=400, detail="子域名已被占用")
 
         proxy_id = store.next_proxy_id_unlocked()
+        frps_name = f"{current.uid}__{proxy_id}"
+        if body.proxy_type == ProxyType.TCP:
+            tcp_mappings = [
+                TcpMapping(
+                    frps_name=_tcp_mapping_name(frps_name, index),
+                    remote_port=remote_port_item,
+                    local_port=local_port_item,
+                    actual_local_port=local_port_item,
+                )
+                for index, (remote_port_item, local_port_item) in enumerate(
+                    zip(remote_ports, local_ports, strict=True)
+                )
+            ]
+            remote_port = tcp_mappings[0].remote_port
+            local_port = tcp_mappings[0].local_port
         proxy = Proxy(
             id=proxy_id,
             uid=current.uid,
             name=name,
-            frps_name=f"{current.uid}__{proxy_id}",
+            frps_name=frps_name,
             token=new_token(),
+            proxy_type=body.proxy_type,
             frps_remote_port=remote_port,
+            local_ip=local_ip,
+            local_port=local_port,
+            subdomain=subdomain,
+            tcp_mappings=tcp_mappings,
+            actual_local_port=local_port,
             speed_limit_kbps=body.speed_limit_kbps or settings.default_speed_limit_kbps,
             traffic_limit_mb=body.traffic_mb,
         )
@@ -160,7 +229,8 @@ async def delete_proxy(proxy_id: int, user: User = Depends(require_user)) -> dic
             proxy.status = ProxyStatus.DELETED
             proxy.is_online = False
             proxy.current_speed_bps = 0
-            port_pool.release(proxy.frps_remote_port)
+            if proxy.proxy_type == ProxyType.TCP and proxy.frps_remote_port is not None:
+                port_pool.release_many([mapping.remote_port for mapping in proxy.tcp_mappings])
     return {"ok": True}
 
 
@@ -180,3 +250,88 @@ def _proxy_scripts_response(proxy: Proxy, dto: dict[str, object]) -> dict[str, o
         "frpc_config": script_renderer.render_frpc_config(proxy, settings),
         "scripts": script_renderer.render_bundle(proxy, settings),
     }
+
+
+def _normalize_local_ip(value: str | None) -> str:
+    local_ip = (value or "127.0.0.1").strip()
+    if not _LOCAL_IP_RE.fullmatch(local_ip):
+        raise HTTPException(status_code=400, detail="本地地址格式不合法")
+    if ".." in local_ip or local_ip.startswith(".") or local_ip.endswith("."):
+        raise HTTPException(status_code=400, detail="本地地址格式不合法")
+    return local_ip
+
+
+def _normalize_subdomain(value: str | None) -> str:
+    subdomain = (value or "").strip().lower()
+    if not subdomain:
+        raise HTTPException(status_code=400, detail="请输入子域名前缀")
+    if not _SUBDOMAIN_RE.fullmatch(subdomain):
+        raise HTTPException(status_code=400, detail="子域名需为 3-63 位小写字母、数字或连字符")
+    return subdomain
+
+
+def _allocate_tcp_ports(
+    body: CreateProxyRequest, legacy_local_port: int
+) -> tuple[list[int], list[int]]:
+    tcp_ports = body.tcp_ports or TcpPortsRequest(
+        mode="auto",
+        count=1,
+        local_start_port=legacy_local_port,
+    )
+    if tcp_ports.mode == "auto":
+        count = tcp_ports.count or 1
+        _validate_tcp_port_count(count)
+        local_start_port = tcp_ports.local_start_port or legacy_local_port
+        local_ports = _local_ports_from_start(local_start_port, count)
+        remote_ports = port_pool.allocate_contiguous(count)
+        if remote_ports is None:
+            raise HTTPException(status_code=400, detail="端口池没有连续可用端口段")
+        return remote_ports, local_ports
+
+    if tcp_ports.mode == "single":
+        if tcp_ports.remote_port is None:
+            raise HTTPException(status_code=400, detail="请输入公网端口")
+        if tcp_ports.local_port is None:
+            raise HTTPException(status_code=400, detail="请输入本地端口")
+        _reserve_requested_remote_ports([tcp_ports.remote_port])
+        return [tcp_ports.remote_port], [tcp_ports.local_port]
+
+    if tcp_ports.remote_start_port is None or tcp_ports.remote_end_port is None:
+        raise HTTPException(status_code=400, detail="请输入公网端口段")
+    if tcp_ports.local_start_port is None:
+        raise HTTPException(status_code=400, detail="请输入本地起始端口")
+    if tcp_ports.remote_start_port > tcp_ports.remote_end_port:
+        raise HTTPException(status_code=400, detail="公网起始端口不能大于结束端口")
+    count = tcp_ports.remote_end_port - tcp_ports.remote_start_port + 1
+    _validate_tcp_port_count(count)
+    remote_ports = list(range(tcp_ports.remote_start_port, tcp_ports.remote_end_port + 1))
+    local_ports = _local_ports_from_start(tcp_ports.local_start_port, count)
+    _reserve_requested_remote_ports(remote_ports)
+    return remote_ports, local_ports
+
+
+def _validate_tcp_port_count(count: int) -> None:
+    if count > settings.max_tcp_ports_per_proxy:
+        raise HTTPException(
+            status_code=400,
+            detail=f"单个 TCP 配置最多 {settings.max_tcp_ports_per_proxy} 个端口",
+        )
+
+
+def _local_ports_from_start(start: int, count: int) -> list[int]:
+    if start < 1 or start + count - 1 > 65535:
+        raise HTTPException(status_code=400, detail="本地端口段必须在 1-65535 之间")
+    return list(range(start, start + count))
+
+
+def _reserve_requested_remote_ports(ports: list[int]) -> None:
+    unavailable = port_pool.reserve_many(ports)
+    if unavailable:
+        raise HTTPException(
+            status_code=400,
+            detail=f"公网端口不可用: {sorted(unavailable)}",
+        )
+
+
+def _tcp_mapping_name(base_name: str, index: int) -> str:
+    return base_name if index == 0 else f"{base_name}__{index + 1}"

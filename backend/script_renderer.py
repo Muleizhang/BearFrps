@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from backend.config import Settings, ROOT_DIR
-from backend.models import Proxy
+from backend.models import Proxy, ProxyType
 
 
 TEMPLATE_FILES = {
@@ -47,21 +47,45 @@ class ScriptRenderer:
         }
 
     def render_frpc_config(self, proxy: Proxy, settings: Settings) -> str:
-        return (
-            f'serverAddr = "{settings.server_public_host}"\n'
-            f"serverPort = {settings.frps_bind_port}\n\n"
+        lines = [
+            f'serverAddr = "{_toml_str(settings.server_public_host)}"\n'
+            f"serverPort = {settings.frps_bind_port}",
+            "",
             'auth.method = "token"\n'
-            f'auth.token = "{settings.frps_auth_token}"\n'
-            f'metadatas.token = "{proxy.token}"\n\n'
-            "[[proxies]]\n"
-            f'name = "{proxy.frps_name}"\n'
-            'type = "tcp"\n'
-            'localIP = "127.0.0.1"\n'
-            f"localPort = {settings.default_local_port}\n"
-            f"remotePort = {proxy.frps_remote_port}\n"
-            f'transport.bandwidthLimit = "{proxy.speed_limit_kbps}KB"\n'
-            'transport.bandwidthLimitMode = "server"\n'
-        )
+            f'auth.token = "{_toml_str(settings.frps_auth_token)}"\n'
+            f'metadatas.token = "{_toml_str(proxy.token)}"',
+            "",
+        ]
+        if proxy.proxy_type == ProxyType.TCP:
+            for mapping in proxy.tcp_mappings:
+                lines.extend(
+                    [
+                        "[[proxies]]",
+                        f'name = "{_toml_str(mapping.frps_name)}"',
+                        'type = "tcp"',
+                        f'localIP = "{_toml_str(proxy.local_ip)}"',
+                        f"localPort = {mapping.local_port}",
+                        f"remotePort = {mapping.remote_port}",
+                        f'transport.bandwidthLimit = "{proxy.speed_limit_kbps}KB"',
+                        'transport.bandwidthLimitMode = "server"',
+                        "",
+                    ]
+                )
+        else:
+            lines.extend(
+                [
+                    "[[proxies]]",
+                    f'name = "{_toml_str(proxy.frps_name)}"',
+                    'type = "http"',
+                    f'localIP = "{_toml_str(proxy.local_ip)}"',
+                    f"localPort = {proxy.local_port}",
+                    f'subdomain = "{_toml_str(proxy.subdomain or "")}"',
+                    f'transport.bandwidthLimit = "{proxy.speed_limit_kbps}KB"',
+                    'transport.bandwidthLimitMode = "server"',
+                    "",
+                ]
+            )
+        return "\n".join(lines)
 
     def _render(self, key: tuple[str, str], proxy: Proxy, settings: Settings) -> str:
         text = self.templates[key]
@@ -71,12 +95,14 @@ class ScriptRenderer:
             "{{FRPS_AUTH_TOKEN}}": settings.frps_auth_token,
             "{{TOKEN}}": proxy.token,
             "{{PROXY_NAME}}": proxy.frps_name,
-            "{{REMOTE_PORT}}": str(proxy.frps_remote_port),
+            "{{REMOTE_PORT}}": str(proxy.frps_remote_port or ""),
             "{{FRP_VERSION}}": settings.frps_version,
             "{{FRP_VERSION_NOV}}": settings.frp_version_without_v,
-            "{{DEFAULT_LOCAL_PORT}}": str(settings.default_local_port),
+            "{{DEFAULT_LOCAL_PORT}}": str(proxy.local_port),
             "{{DEFAULT_SPEED_LIMIT_KBPS}}": str(proxy.speed_limit_kbps),
             "{{DEMO_BIN_BASE_URL}}": settings.demo_bin_base_url,
+            "{{FRPC_CONFIG}}": self.render_frpc_config(proxy, settings).rstrip(),
+            "{{LOCAL_PORT}}": str(proxy.local_port),
         }
         for placeholder, value in replacements.items():
             text = text.replace(placeholder, value)
@@ -100,13 +126,14 @@ class ScriptRenderer:
         return tmpl
 
 
+def _toml_str(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 FRPC_UNIX_FALLBACK = r"""#!/bin/bash
 set -e
 
 echo "=== frpc 启动脚本 ==="
-printf "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: "
-read PORT
-PORT=${PORT:-{{DEFAULT_LOCAL_PORT}}}
 FRP_VERSION="{{FRP_VERSION}}"
 FRP_VERSION_NOV=${FRP_VERSION#v}
 
@@ -132,31 +159,15 @@ if [ ! -f frpc ]; then
 fi
 
 cat > frpc.toml <<EOF
-serverAddr = "{{SERVER_HOST}}"
-serverPort = {{SERVER_PORT}}
-
-auth.method = "token"
-auth.token = "{{FRPS_AUTH_TOKEN}}"
-metadatas.token = "{{TOKEN}}"
-
-[[proxies]]
-name = "{{PROXY_NAME}}"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = ${PORT}
-remotePort = {{REMOTE_PORT}}
-transport.bandwidthLimit = "{{DEFAULT_SPEED_LIMIT_KBPS}}KB"
-transport.bandwidthLimitMode = "server"
+{{FRPC_CONFIG}}
 EOF
 
-echo "启动 frpc, 公网端口 {{REMOTE_PORT}}, 本地端口 ${PORT}"
+echo "启动 frpc"
 ./frpc -c frpc.toml
 """
 
 
 FRPC_WINDOWS_FALLBACK = r"""Write-Host "=== frpc 启动脚本 ==="
-$portInput = Read-Host "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]"
-if ([string]::IsNullOrWhiteSpace($portInput)) { $port = {{DEFAULT_LOCAL_PORT}} } else { $port = $portInput }
 $frpVersion = "{{FRP_VERSION}}"
 $frpVersionNoV = $frpVersion -replace '^v', ''
 
@@ -174,24 +185,10 @@ if (-not (Test-Path "frpc.exe")) {
 Unblock-File ".\frpc.exe" -ErrorAction SilentlyContinue
 
 @"
-serverAddr = "{{SERVER_HOST}}"
-serverPort = {{SERVER_PORT}}
-
-auth.method = "token"
-auth.token = "{{FRPS_AUTH_TOKEN}}"
-metadatas.token = "{{TOKEN}}"
-
-[[proxies]]
-name = "{{PROXY_NAME}}"
-type = "tcp"
-localIP = "127.0.0.1"
-localPort = $port
-remotePort = {{REMOTE_PORT}}
-transport.bandwidthLimit = "{{DEFAULT_SPEED_LIMIT_KBPS}}KB"
-transport.bandwidthLimitMode = "server"
+{{FRPC_CONFIG}}
 "@ | Set-Content -Encoding UTF8 frpc.toml
 
-Write-Host "启动 frpc, 公网端口 {{REMOTE_PORT}}, 本地端口 $port"
+Write-Host "启动 frpc"
 .\frpc.exe -c frpc.toml
 """
 

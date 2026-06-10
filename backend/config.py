@@ -21,6 +21,8 @@ class Settings(BaseModel):
     frps_admin_user: str = "admin"
     frps_admin_password: str = "changeme"
     frps_auth_token: str = "bearfrps-internal"
+    frps_vhost_http_port: int = 8080
+    frps_subdomain_host: str = ""
 
     plugin_path: str = "/frps-plugin"
     remote_port_range_start: int = 1
@@ -28,6 +30,7 @@ class Settings(BaseModel):
     allocatable_port_range_start: int = 50000
     allocatable_port_range_end: int = 50100
     default_local_port: int = 9527
+    max_tcp_ports_per_proxy: int = 10
 
     free_recharge_amount_mb: int = 100
     default_speed_limit_kbps: int = 1024
@@ -44,6 +47,10 @@ class Settings(BaseModel):
     @property
     def demo_bin_base_url(self) -> str:
         return f"http://{self.server_public_host}:{self.backend_port}/static/demo-server-bin"
+
+    @property
+    def effective_subdomain_host(self) -> str:
+        return self.frps_subdomain_host or self.server_public_host
 
     @property
     def plugin_addr(self) -> str:
@@ -63,6 +70,12 @@ def get_settings() -> Settings:
         frps_admin_user=_env_str("FRPS_ADMIN_USER", defaults.frps_admin_user),
         frps_admin_password=_env_str("FRPS_ADMIN_PASSWORD", defaults.frps_admin_password),
         frps_auth_token=_env_str("FRPS_AUTH_TOKEN", defaults.frps_auth_token),
+        frps_vhost_http_port=_env_int(
+            "FRPS_VHOST_HTTP_PORT", defaults.frps_vhost_http_port
+        ),
+        frps_subdomain_host=_env_str(
+            "FRPS_SUBDOMAIN_HOST", defaults.frps_subdomain_host
+        ),
         plugin_path=_env_str("PLUGIN_PATH", defaults.plugin_path),
         remote_port_range_start=_env_int(
             "REMOTE_PORT_RANGE_START", defaults.remote_port_range_start
@@ -75,6 +88,9 @@ def get_settings() -> Settings:
             "ALLOCATABLE_PORT_RANGE_END", defaults.allocatable_port_range_end
         ),
         default_local_port=_env_int("DEFAULT_LOCAL_PORT", defaults.default_local_port),
+        max_tcp_ports_per_proxy=_env_int(
+            "MAX_TCP_PORTS_PER_PROXY", defaults.max_tcp_ports_per_proxy
+        ),
         free_recharge_amount_mb=_env_int(
             "FREE_RECHARGE_AMOUNT_MB", defaults.free_recharge_amount_mb
         ),

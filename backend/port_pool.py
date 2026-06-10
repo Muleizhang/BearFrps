@@ -12,25 +12,65 @@ class PortPool:
         self._available: set[int] = set(range(start, end + 1))
 
     def allocate(self) -> int | None:
-        while self._available:
-            port = min(self._available)
-            self._available.remove(port)
-            if not _is_port_in_use(port):
-                return port
+        ports = self.allocate_contiguous(1)
+        return ports[0] if ports else None
+
+    def allocate_contiguous(self, count: int) -> list[int] | None:
+        if count <= 0:
+            return None
+        for start in range(self.start, self.end - count + 2):
+            ports = list(range(start, start + count))
+            if not all(port in self._available for port in ports):
+                continue
+            system_in_use = [port for port in ports if _is_port_in_use(port)]
+            if system_in_use:
+                for port in system_in_use:
+                    self._available.discard(port)
+                continue
+            for port in ports:
+                self._available.remove(port)
+            return ports
         return None
 
     def release(self, port: int) -> None:
         if self.start <= port <= self.end:
             self._available.add(port)
 
+    def release_many(self, ports: list[int] | tuple[int, ...] | set[int]) -> None:
+        for port in ports:
+            self.release(port)
+
     def reserve(self, port: int) -> bool:
-        if port not in self._available:
-            return False
-        self._available.remove(port)
-        return True
+        unavailable = self.reserve_many([port])
+        return not unavailable
+
+    def reserve_many(self, ports: list[int] | tuple[int, ...] | set[int]) -> list[int]:
+        requested = list(dict.fromkeys(ports))
+        unavailable = self.unavailable_ports(requested)
+        if unavailable:
+            return unavailable
+        for port in requested:
+            self._available.remove(port)
+        return []
+
+    def unavailable_ports(self, ports: list[int] | tuple[int, ...] | set[int]) -> list[int]:
+        unavailable: list[int] = []
+        for port in dict.fromkeys(ports):
+            if port < self.start or port > self.end:
+                unavailable.append(port)
+            elif port not in self._available:
+                unavailable.append(port)
+            elif _is_port_in_use(port):
+                unavailable.append(port)
+        return unavailable
 
     def is_port_available(self, port: int) -> bool:
-        return port in self._available
+        if port < self.start or port > self.end:
+            return False
+        return port in self._available and not _is_port_in_use(port)
+
+    def is_port_unreserved(self, port: int) -> bool:
+        return self.start <= port <= self.end and port in self._available
 
     def reset(self) -> None:
         self._available = set(range(self.start, self.end + 1))

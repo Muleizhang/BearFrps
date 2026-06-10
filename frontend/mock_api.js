@@ -1,6 +1,7 @@
 (function () {
   window.USE_MOCK = true;
   window.MOCK_SERVER_HOST = "120.46.51.131";
+  window.MOCK_SUBDOMAIN_HOST = "apps.bearfrps.test";
 
   function makeUid() {
     return "u_" + Math.random().toString(16).slice(2, 10).padEnd(8, "0").slice(0, 8);
@@ -66,47 +67,186 @@
     return Object.values(users).some(function (u) { return u.username === username; });
   }
 
-  function nextPort() {
+  function tcpMappings(proxy) {
+    proxy.proxy_type = proxy.proxy_type || "tcp";
+    if (proxy.proxy_type !== "tcp") return [];
+    if (Array.isArray(proxy.tcp_mappings) && proxy.tcp_mappings.length) return proxy.tcp_mappings;
+    if (proxy.frps_remote_port != null) {
+      return [{
+        frps_name: proxy.frps_name || proxy.name,
+        remote_port: proxy.frps_remote_port,
+        local_port: proxy.local_port || proxy.actual_local_port || 9527,
+        actual_local_port: proxy.actual_local_port || proxy.local_port || 9527,
+        is_online: !!proxy.is_online,
+        current_speed_bps: proxy.current_speed_bps || 0
+      }];
+    }
+    return [];
+  }
+
+  function usedTcpPorts() {
     let proxies = loadProxies();
-    let used = new Set(proxies.map(function (p) { return p.frps_remote_port; }));
-    for (let i = mockAllocatableStart; i <= mockAllocatableEnd; i++) {
-      if (!used.has(i)) return i;
+    let used = new Set();
+    proxies
+      .filter(function (p) { return (p.proxy_type || "tcp") === "tcp" && p.status !== "deleted"; })
+      .forEach(function (p) {
+        tcpMappings(p).forEach(function (m) { used.add(Number(m.remote_port)); });
+      });
+    return used;
+  }
+
+  function allocateContiguous(count) {
+    var used = usedTcpPorts();
+    for (let i = mockAllocatableStart; i <= mockAllocatableEnd - count + 1; i++) {
+      var ports = [];
+      var ok = true;
+      for (var j = 0; j < count; j++) {
+        var port = i + j;
+        if (used.has(port)) { ok = false; break; }
+        ports.push(port);
+      }
+      if (ok) return ports;
     }
     return null;
+  }
+
+  function unavailablePorts(ports) {
+    var used = usedTcpPorts();
+    return ports.filter(function (port) {
+      return port < mockAllocatableStart || port > mockAllocatableEnd || used.has(port);
+    });
+  }
+
+  function validPort(port) {
+    return port >= 1 && port <= 65535;
+  }
+
+  function localPortsFromStart(start, count) {
+    if (!validPort(start) || start + count - 1 > 65535) {
+      return { error: "本地端口段必须在 1-65535 之间" };
+    }
+    var ports = [];
+    for (var i = 0; i < count; i++) ports.push(start + i);
+    return { ports: ports };
+  }
+
+  function buildTcpPortPlan(body, fallbackLocalPort) {
+    var cfg = body.tcp_ports || { mode: "auto", count: 1, local_start_port: fallbackLocalPort };
+    var mode = cfg.mode || "auto";
+    if (mode === "auto") {
+      var count = Number(cfg.count || 1);
+      if (!count || count < 1 || count > 10) return { error: "单个 TCP 配置最多 10 个端口" };
+      var localStart = Number(cfg.local_start_port || fallbackLocalPort);
+      var localPlan = localPortsFromStart(localStart, count);
+      if (localPlan.error) return localPlan;
+      var remotePorts = allocateContiguous(count);
+      if (!remotePorts) return { error: "端口池没有连续可用端口段" };
+      return { remote_ports: remotePorts, local_ports: localPlan.ports };
+    }
+    if (mode === "single") {
+      var remotePort = Number(cfg.remote_port || 0);
+      var localPort = Number(cfg.local_port || 0);
+      if (!validPort(remotePort)) return { error: "请输入有效公网端口" };
+      if (!validPort(localPort)) return { error: "请输入有效本地端口" };
+      var unavailable = unavailablePorts([remotePort]);
+      if (unavailable.length) return { error: "公网端口不可用: [" + unavailable.join(", ") + "]" };
+      return { remote_ports: [remotePort], local_ports: [localPort] };
+    }
+    var remoteStart = Number(cfg.remote_start_port || 0);
+    var remoteEnd = Number(cfg.remote_end_port || 0);
+    var rangeLocalStart = Number(cfg.local_start_port || 0);
+    if (!validPort(remoteStart) || !validPort(remoteEnd)) return { error: "请输入有效公网端口段" };
+    if (!validPort(rangeLocalStart)) return { error: "请输入有效本地起始端口" };
+    if (remoteStart > remoteEnd) return { error: "公网起始端口不能大于结束端口" };
+    var rangeCount = remoteEnd - remoteStart + 1;
+    if (rangeCount > 10) return { error: "单个 TCP 配置最多 10 个端口" };
+    var rangeLocalPlan = localPortsFromStart(rangeLocalStart, rangeCount);
+    if (rangeLocalPlan.error) return rangeLocalPlan;
+    var requested = [];
+    for (var j = 0; j < rangeCount; j++) requested.push(remoteStart + j);
+    var blocked = unavailablePorts(requested);
+    if (blocked.length) return { error: "公网端口不可用: [" + blocked.join(", ") + "]" };
+    return { remote_ports: requested, local_ports: rangeLocalPlan.ports };
   }
 
   let adminSession = false;
   let mockAllocatableStart = 50000;
   let mockAllocatableEnd = 50100;
 
+  function withPublicUrl(proxy) {
+    var p = Object.assign({}, proxy);
+    p.proxy_type = p.proxy_type || "tcp";
+    p.local_ip = p.local_ip || "127.0.0.1";
+    p.local_port = p.local_port || p.actual_local_port || 527;
+    if (p.proxy_type === "http") {
+      p.public_url = p.subdomain ? "http://" + p.subdomain + "." + window.MOCK_SUBDOMAIN_HOST + ":8080/" : null;
+      p.public_urls = p.public_url ? [p.public_url] : [];
+      p.tcp_mappings = [];
+    } else {
+      p.tcp_mappings = tcpMappings(p);
+      if (p.tcp_mappings.length) {
+        p.frps_remote_port = p.tcp_mappings[0].remote_port;
+        p.local_port = p.tcp_mappings[0].local_port;
+        p.actual_local_port = p.tcp_mappings[0].actual_local_port;
+      }
+      p.public_urls = p.tcp_mappings.map(function (m) {
+        return "http://" + window.MOCK_SERVER_HOST + ":" + m.remote_port + "/";
+      });
+      p.public_url = p.public_urls[0] || null;
+    }
+    return p;
+  }
+
   function makeFrpcConfig(proxy) {
-    return 'serverAddr = "' + window.MOCK_SERVER_HOST + '"\n'
-      + 'serverPort = 7000\n\n'
-      + 'auth.method = "token"\n'
-      + 'auth.token = "' + proxy.token + '"\n\n'
-      + '[[proxies]]\n'
-      + 'name = "' + proxy.name + '"\n'
-      + 'type = "tcp"\n'
-      + 'localIP = "127.0.0.1"\n'
-      + 'localPort = 527\n'
-      + 'remotePort = ' + proxy.frps_remote_port + '\n';
+    proxy = withPublicUrl(proxy);
+    var lines = [
+      'serverAddr = "' + window.MOCK_SERVER_HOST + '"',
+      'serverPort = 7000',
+      '',
+      'auth.method = "token"',
+      'auth.token = "bearfrps-internal"',
+      'metadatas.token = "' + proxy.token + '"',
+      ''
+    ];
+    if (proxy.proxy_type === "http") {
+      lines.push('[[proxies]]');
+      lines.push('name = "' + (proxy.frps_name || proxy.name) + '"');
+      lines.push('type = "http"');
+      lines.push('localIP = "' + proxy.local_ip + '"');
+      lines.push('localPort = ' + proxy.local_port);
+      lines.push('subdomain = "' + proxy.subdomain + '"');
+    } else {
+      tcpMappings(proxy).forEach(function (m) {
+        lines.push('[[proxies]]');
+        lines.push('name = "' + m.frps_name + '"');
+        lines.push('type = "tcp"');
+        lines.push('localIP = "' + proxy.local_ip + '"');
+        lines.push('localPort = ' + m.local_port);
+        lines.push('remotePort = ' + m.remote_port);
+        lines.push('transport.bandwidthLimit = "' + (proxy.speed_limit_kbps || 1024) + 'KB"');
+        lines.push('transport.bandwidthLimitMode = "server"');
+        lines.push('');
+      });
+      return lines.join("\n");
+    }
+    lines.push('transport.bandwidthLimit = "' + (proxy.speed_limit_kbps || 1024) + 'KB"');
+    lines.push('transport.bandwidthLimitMode = "server"');
+    lines.push('');
+    return lines.join("\n");
   }
 
   function makeScripts(proxy) {
     var cfg = makeFrpcConfig(proxy);
-    var cfgEscaped = cfg.replace(/'/g, "'\\''");
-    var version = "0.58.1";
-    var rp = proxy.frps_remote_port;
-    var name = proxy.name;
-    var token = proxy.token;
+    var version = "v0.58.1";
+    var versionNoV = "0.58.1";
     var host = window.MOCK_SERVER_HOST;
     var binBase = "http://" + host + ":8000/static/demo-server-bin";
 
-    var frpcLinux = "#!/bin/bash\nread -p 'Local port [default 527]: ' PORT\nPORT=${PORT:-527}\n\nARCH=$(uname -m)\ncase $ARCH in\n  x86_64) ARCH=amd64;;\n  aarch64|arm64) ARCH=arm64;;\nesac\n\nif [ ! -f frpc ]; then\n  curl -L -o frp.tar.gz \"https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + version + "_linux_${ARCH}.tar.gz\"\n  tar xzf frp.tar.gz --strip-components=1 --wildcards \"*/frpc\"\n  chmod +x frpc\nfi\n\ncat > frpc.toml <<'EOF'\n" + cfg + "EOF\n\nsed -i \"s/localPort = 527/localPort = $PORT/\" frpc.toml\n\n./frpc -c frpc.toml\n";
+    var frpcLinux = "#!/bin/bash\nset -e\n\nARCH=$(uname -m)\ncase $ARCH in\n  x86_64) ARCH=amd64;;\n  aarch64|arm64) ARCH=arm64;;\nesac\n\nif [ ! -f frpc ]; then\n  curl -L -o frp.tar.gz \"https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + versionNoV + "_linux_${ARCH}.tar.gz\"\n  tar xzf frp.tar.gz --strip-components=1 --wildcards \"*/frpc\"\n  chmod +x frpc\nfi\n\ncat > frpc.toml <<'EOF'\n" + cfg + "EOF\n\n./frpc -c frpc.toml\n";
 
-    var frpcMac = "#!/bin/bash\nread -p 'Local port [default 527]: ' PORT\nPORT=${PORT:-527}\n\nARCH=$(uname -m)\ncase $ARCH in\n  x86_64) ARCH=amd64;;\n  aarch64|arm64) ARCH=arm64;;\nesac\n\nif [ ! -f frpc ]; then\n  curl -L -o frp.tar.gz \"https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + version + "_darwin_${ARCH}.tar.gz\"\n  tar xzf frp.tar.gz --strip-components=1 --wildcards \"*/frpc\"\n  chmod +x frpc\nfi\n\ncat > frpc.toml <<'EOF'\n" + cfg + "EOF\n\nsed -i '' \"s/localPort = 527/localPort = $PORT/\" frpc.toml\n\n./frpc -c frpc.toml\n";
+    var frpcMac = "#!/bin/bash\nset -e\n\nARCH=$(uname -m)\ncase $ARCH in\n  x86_64) ARCH=amd64;;\n  aarch64|arm64) ARCH=arm64;;\nesac\n\nif [ ! -f frpc ]; then\n  curl -L -o frp.tar.gz \"https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + versionNoV + "_darwin_${ARCH}.tar.gz\"\n  tar xzf frp.tar.gz --strip-components=1 --wildcards \"*/frpc\"\n  chmod +x frpc\nfi\n\ncat > frpc.toml <<'EOF'\n" + cfg + "EOF\n\n./frpc -c frpc.toml\n";
 
-    var frpcWin = "$PORT = Read-Host 'Local port [default 527]'\nif (-not $PORT) { $PORT = 527 }\n\nif (-not (Test-Path frpc.exe)) {\n  Invoke-WebRequest -Uri 'https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + version + "_windows_amd64.zip' -OutFile frp.zip\n  Expand-Archive frp.zip -DestinationPath .\n  Move-Item frp_*\\frpc.exe .\n  Remove-Item frp_* -Recurse\n}\n\n$cfg = @\"\n" + cfg + "\"@\n$cfg = $cfg -replace 'localPort = 527', \"localPort = $PORT\"\nSet-Content frpc.toml $cfg\n\n.\\frpc.exe -c frpc.toml\n";
+    var frpcWin = "if (-not (Test-Path frpc.exe)) {\n  Invoke-WebRequest -Uri 'https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + versionNoV + "_windows_amd64.zip' -OutFile frp.zip\n  Expand-Archive frp.zip -DestinationPath .\n  Move-Item frp_*\\frpc.exe .\n  Remove-Item frp_* -Recurse\n}\n\n$cfg = @\"\n" + cfg + "\"@\nSet-Content frpc.toml $cfg\n\n.\\frpc.exe -c frpc.toml\n";
 
     var demoServerPy = "import http.server, json, time, argparse, os, math\n\nclass Handler(http.server.BaseHTTPRequestHandler):\n    msgs = []\n    COLORS = ['#d1fae5','#dbeafe','#fce7f3','#fef3c7','#ede9fe','#ccfbf1','#fef9c3','#e0e7ff']\n    bg = COLORS[int(time.time()) % len(COLORS)]\n\n    def do_GET(self):\n        if self.path == '/api/messages':\n            self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers()\n            self.wfile.write(json.dumps(self.msgs).encode())\n        else:\n            html = '<html><head><meta charset=utf-8><style>body{background:'+self.bg+';font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px}input,textarea{width:100%;padding:8px;margin:4px 0;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}button{padding:8px 16px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer}.msg{padding:8px;border-bottom:1px solid #e5e7eb}</style></head><body>'\n            html += '<h2>Message Board</h2>'\n            html += '<form onsubmit=\"postMsg();return false\"><input id=nick placeholder=Nickname><textarea id=content placeholder=Message rows=2></textarea><button type=submit>Send</button></form>'\n            html += '<div id=list></div>'\n            html += '<script>function load(){fetch(\"/api/messages\").then(r=>r.json()).then(d=>{document.getElementById(\"list\").innerHTML=d.map(m=>\"<div class=msg><b>\"+m.nickname+\"</b> \"+m.content+\"</div>\").join(\"\")})}function postMsg(){fetch(\"/api/messages\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify({nickname:document.getElementById(\"nick\").value,content:document.getElementById(\"content\").value})}).then(load)}setInterval(load,3000);load()</script>'\n            html += '</body></html>'\n            self.send_response(200); self.send_header('Content-Type','text/html'); self.end_headers()\n            self.wfile.write(html.encode())\n\n    def do_POST(self):\n        if self.path == '/api/messages':\n            length = int(self.headers.get('Content-Length',0))\n            data = json.loads(self.rfile.read(length))\n            data['timestamp'] = time.time()\n            self.msgs.append(data)\n            self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers()\n            self.wfile.write(json.dumps({'ok':True}).encode())\n\nif __name__ == '__main__':\n    p = argparse.ArgumentParser()\n    p.add_argument('--port', type=int, default=527)\n    a = p.parse_args()\n    print(f'Serving on port {a.port}...')\n    http.server.HTTPServer(('0.0.0.0', a.port), Handler).serve_forever()\n";
 
@@ -130,14 +270,35 @@
     let proxies = loadProxies();
     proxies.forEach(function (p) {
       if (p.status === "active") {
-        p.is_online = Math.random() > 0.3;
+        if ((p.proxy_type || "tcp") === "tcp") {
+          p.tcp_mappings = tcpMappings(p).map(function (m) {
+            var online = Math.random() > 0.3;
+            var speed = online ? Math.floor(Math.random() * 500000) : 0;
+            return Object.assign({}, m, {
+              is_online: online,
+              actual_local_port: m.local_port,
+              current_speed_bps: speed
+            });
+          });
+          p.is_online = p.tcp_mappings.some(function (m) { return m.is_online; });
+          p.current_speed_bps = p.tcp_mappings.reduce(function (sum, m) { return sum + (m.current_speed_bps || 0); }, 0);
+          if (p.tcp_mappings.length) {
+            p.frps_remote_port = p.tcp_mappings[0].remote_port;
+            p.local_port = p.tcp_mappings[0].local_port;
+            p.actual_local_port = p.tcp_mappings[0].actual_local_port;
+          }
+        } else {
+          p.is_online = Math.random() > 0.3;
+          if (p.is_online) {
+            p.current_speed_bps = Math.floor(Math.random() * 500000);
+            p.actual_local_port = p.local_port || 527;
+          } else {
+            p.current_speed_bps = 0;
+          }
+        }
         if (p.is_online) {
           p.traffic_used_bytes = Math.min(p.traffic_used_bytes + Math.floor(Math.random() * 100000), p.traffic_limit_mb * 1024 * 1024);
-          p.current_speed_bps = Math.floor(Math.random() * 500000);
-          p.actual_local_port = 527;
           p.last_seen_at = new Date().toISOString();
-        } else {
-          p.current_speed_bps = 0;
         }
       }
     });
@@ -250,7 +411,9 @@
       var user = requireUser();
       if (!user) return { status: 401, body: { detail: "user login required" } };
       refreshOnlineStatus();
-      var proxies = loadProxies().filter(function (p) { return p.uid === user.uid && p.status !== "deleted"; });
+      var proxies = loadProxies()
+        .filter(function (p) { return p.uid === user.uid && p.status !== "deleted"; })
+        .map(withPublicUrl);
       return { status: 200, body: { proxies: proxies } };
     },
 
@@ -261,27 +424,68 @@
 
       var proxies = loadProxies();
       var mine = proxies.filter(function (p) { return p.uid === user.uid && p.status !== "deleted"; });
+      var proxyType = (body.proxy_type || "tcp").toLowerCase();
+      var name = String(body.name || "").trim();
+      var localIp = String(body.local_ip || "127.0.0.1").trim();
+      var localPort = Number(body.local_port || 9527);
+      var subdomain = String(body.subdomain || "").trim().toLowerCase();
 
       if (mine.length >= 3) return { status: 400, body: { detail: "超过最大连接数" } };
       if (body.traffic_mb > user.balance_mb) return { status: 400, body: { detail: "余额不足" } };
-      if (mine.some(function (p) { return p.name === body.name; })) return { status: 400, body: { detail: "名称重复" } };
+      if (!name) return { status: 400, body: { detail: "名称不能为空" } };
+      if (mine.some(function (p) { return p.name === name; })) return { status: 400, body: { detail: "名称重复" } };
+      if (!/^[A-Za-z0-9.-]{1,253}$/.test(localIp)) return { status: 400, body: { detail: "本地地址格式不合法" } };
 
-      var port = nextPort();
-      if (port === null) return { status: 400, body: { detail: "端口池满" } };
+      var port = null;
+      var tcpPlan = null;
+      if (proxyType === "http") {
+        if (!localPort || localPort < 1 || localPort > 65535) return { status: 400, body: { detail: "请输入有效本地端口" } };
+        if (!/^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/.test(subdomain)) {
+          return { status: 400, body: { detail: "子域名需为 3-63 位小写字母、数字或连字符" } };
+        }
+        if (proxies.some(function (p) { return p.status !== "deleted" && (p.proxy_type || "tcp") === "http" && p.subdomain === subdomain; })) {
+          return { status: 400, body: { detail: "子域名已被占用" } };
+        }
+      } else {
+        proxyType = "tcp";
+        tcpPlan = buildTcpPortPlan(body, localPort);
+        if (tcpPlan.error) return { status: 400, body: { detail: tcpPlan.error } };
+        port = tcpPlan.remote_ports[0];
+        localPort = tcpPlan.local_ports[0];
+      }
 
       user.balance_mb -= body.traffic_mb;
       users[user.uid] = user;
       saveUsers(users);
 
+      var proxyId = Date.now();
+      var frpsName = user.uid + "__" + proxyId;
+      var mappings = tcpPlan ? tcpPlan.remote_ports.map(function (remotePort, index) {
+        return {
+          frps_name: index === 0 ? frpsName : frpsName + "__" + (index + 1),
+          remote_port: remotePort,
+          local_port: tcpPlan.local_ports[index],
+          actual_local_port: tcpPlan.local_ports[index],
+          is_online: false,
+          current_speed_bps: 0
+        };
+      }) : [];
+
       var proxy = {
-        id: Date.now(),
+        id: proxyId,
         uid: user.uid,
-        name: body.name,
+        name: name,
+        frps_name: frpsName,
         token: makeToken(),
+        proxy_type: proxyType,
         frps_remote_port: port,
+        local_ip: localIp,
+        local_port: localPort,
+        subdomain: proxyType === "http" ? subdomain : null,
+        tcp_mappings: mappings,
         status: "active",
         is_online: false,
-        actual_local_port: null,
+        actual_local_port: localPort,
         speed_limit_kbps: body.speed_limit_kbps || 1024,
         traffic_limit_mb: body.traffic_mb,
         traffic_used_bytes: 0,
@@ -290,6 +494,7 @@
         last_seen_at: null
       };
 
+      proxy = withPublicUrl(proxy);
       proxies.push(proxy);
       saveProxies(proxies);
 
@@ -322,6 +527,7 @@
       var proxies = loadProxies();
       var proxy = proxies.find(function (p) { return String(p.id) === idStr && p.uid === user.uid; });
       if (!proxy) return { status: 404, body: { detail: "Not found" } };
+      proxy = withPublicUrl(proxy);
       return {
         status: 200,
         body: {
@@ -348,7 +554,7 @@
     "GET /api/admin/proxies": function () {
       if (!adminSession) return { status: 401, body: { detail: "Unauthorized" } };
       refreshOnlineStatus();
-      return { status: 200, body: { proxies: loadProxies() } };
+      return { status: 200, body: { proxies: loadProxies().map(withPublicUrl) } };
     },
 
     "GET /api/admin/users": function () {
@@ -400,7 +606,12 @@
     "GET /api/admin/config": function () {
       if (!adminSession) return { status: 401, body: { detail: "Unauthorized" } };
       var proxies = loadProxies();
-      var allocated = proxies.filter(function (p) { return p.status !== "deleted"; }).length;
+      var allocated = 0;
+      proxies.filter(function (p) {
+        return p.status !== "deleted" && (p.proxy_type || "tcp") === "tcp";
+      }).forEach(function (p) {
+        allocated += tcpMappings(p).length;
+      });
       return {
         status: 200,
         body: {
@@ -420,8 +631,13 @@
       var proxies = loadProxies();
       for (var i = 0; i < proxies.length; i++) {
         var p = proxies[i];
-        if (p.status !== "deleted" && (p.frps_remote_port < start || p.frps_remote_port > end)) {
-          return { status: 400, body: { detail: "新区间不覆盖已分配端口: [" + p.frps_remote_port + "]" } };
+        if (p.status !== "deleted" && (p.proxy_type || "tcp") === "tcp") {
+          var outside = tcpMappings(p).map(function (m) { return Number(m.remote_port); }).filter(function (port) {
+            return port < start || port > end;
+          });
+          if (outside.length) {
+            return { status: 400, body: { detail: "新区间不覆盖已分配端口: [" + outside.join(", ") + "]" } };
+          }
         }
       }
       mockAllocatableStart = start;
@@ -435,11 +651,16 @@
         return p.is_online && p.status === "active";
       });
       var result = proxies.map(function (p) {
+        p = withPublicUrl(p);
         return {
           id: p.id,
           name: p.name,
+          proxy_type: p.proxy_type,
           remote_port: p.frps_remote_port,
-          public_url: "http://" + window.MOCK_SERVER_HOST + ":" + p.frps_remote_port + "/"
+          remote_ports: tcpMappings(p).map(function (m) { return m.remote_port; }),
+          tcp_mappings: p.tcp_mappings || [],
+          public_url: p.public_url,
+          public_urls: p.public_urls || []
         };
       });
       return { status: 200, body: { proxies: result } };

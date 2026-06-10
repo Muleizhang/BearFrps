@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from backend.deps import settings
-from backend.models import Proxy, ProxyStatus, store
+from backend.models import Proxy, ProxyStatus, ProxyType, store
 
 
 router = APIRouter()
@@ -45,18 +45,29 @@ async def _handle_login(content: dict[str, Any]) -> dict[str, Any]:
 
 async def _handle_new_proxy(content: dict[str, Any]) -> dict[str, Any]:
     token = _extract_token(content)
-    remote_port = content.get("remote_port", content.get("remotePort"))
+    remote_port = _as_int(content.get("remote_port", content.get("remotePort")))
     proxy_name = content.get("proxy_name", content.get("proxyName"))
+    proxy_type = str(content.get("proxy_type", content.get("proxyType", ""))).lower()
     async with store.lock:
         proxy = store.find_proxy_by_token_unlocked(token)
         reason = _reject_reason_unlocked(proxy)
         if reason:
             return _reject(reason)
         assert proxy is not None
-        if proxy_name != proxy.frps_name:
-            return _reject("proxy name mismatch")
-        if remote_port != proxy.frps_remote_port:
-            return _reject("remote port mismatch")
+        if proxy_type and proxy_type != proxy.proxy_type.value:
+            return _reject("proxy type mismatch")
+        if proxy.proxy_type == ProxyType.TCP:
+            mapping = _find_tcp_mapping(proxy, proxy_name)
+            if mapping is None:
+                return _reject("proxy name mismatch")
+            if remote_port != mapping.remote_port:
+                return _reject("remote port mismatch")
+            mapping.is_online = True
+        else:
+            if proxy_name != proxy.frps_name:
+                return _reject("proxy name mismatch")
+            if _extract_subdomain(content) != proxy.subdomain:
+                return _reject("subdomain mismatch")
         proxy.is_online = True
         proxy.last_seen_at = datetime.now(UTC)
 
@@ -70,8 +81,18 @@ async def _handle_close_proxy(content: dict[str, Any]) -> dict[str, Any]:
     async with store.lock:
         proxy = store.find_proxy_by_frps_name_unlocked(proxy_name)
         if proxy:
-            proxy.is_online = False
-            proxy.current_speed_bps = 0
+            if proxy.proxy_type == ProxyType.TCP:
+                mapping = _find_tcp_mapping(proxy, proxy_name)
+                if mapping:
+                    mapping.is_online = False
+                    mapping.current_speed_bps = 0
+                proxy.is_online = any(mapping.is_online for mapping in proxy.tcp_mappings)
+                proxy.current_speed_bps = sum(
+                    mapping.current_speed_bps for mapping in proxy.tcp_mappings
+                )
+            else:
+                proxy.is_online = False
+                proxy.current_speed_bps = 0
             proxy.last_seen_at = datetime.now(UTC)
     return _allow()
 
@@ -105,6 +126,33 @@ def _extract_token(content: dict[str, Any]) -> str | None:
         return str(content["user"])
     if content.get("token"):
         return str(content["token"])
+    return None
+
+
+def _extract_subdomain(content: dict[str, Any]) -> str | None:
+    if content.get("subdomain"):
+        return str(content["subdomain"]).lower()
+    custom_domains = content.get("custom_domains", content.get("customDomains"))
+    if isinstance(custom_domains, list):
+        suffix = "." + settings.effective_subdomain_host.lower()
+        for domain in custom_domains:
+            value = str(domain).lower()
+            if value.endswith(suffix):
+                return value[: -len(suffix)]
+    return None
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _find_tcp_mapping(proxy: Proxy, frps_name: Any):
+    for mapping in proxy.tcp_mappings:
+        if mapping.frps_name == frps_name:
+            return mapping
     return None
 
 
