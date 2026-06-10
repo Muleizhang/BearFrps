@@ -3,3 +3,7 @@
 __pycache__/
 *.py[cod]
 config/users.json
+config/*.db
+config/*.db-*
+/frpc
+/frpc.toml

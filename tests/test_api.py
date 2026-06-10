@@ -151,11 +151,13 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 
 from fastapi.testclient import TestClient
 
-from backend.deps import settings
-from backend.main import app
+from backend import sqlite_persistence
+from backend.deps import port_pool, settings
+from backend.main import _reserve_loaded_tcp_ports_unlocked, app
 from backend.auth import clear_all_user_sessions
 from backend.models import Proxy, ProxyStatus, store
 from backend.user_persistence import load_registered_users_unlocked
@@ -835,6 +837,64 @@ def test_update_xtcp_proxy_ignores_handshake_fields():
         assert "evil-secret" not in body["frpc_configs"]["visitor"]
         assert "bindPort = 9100" in body["frpc_configs"]["visitor"]
         assert "fallbackTimeoutMs = 1500" in body["frpc_configs"]["visitor"]
+
+
+def test_sqlite_persists_users_proxies_and_restores_after_restart():
+    with TestClient(app) as client:
+        registered = register_user(client)
+        client.post("/api/user/recharge", json={})
+        client.post("/api/user/recharge", json={})
+        tcp = client.post(
+            "/api/proxies",
+            json={
+                "name": "tcp-db",
+                "traffic_mb": 10,
+                "tcp_ports": {"mode": "single", "remote_port": 50000, "local_port": 9528},
+            },
+        )
+        http = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "http",
+                "name": "http-db",
+                "traffic_mb": 10,
+                "local_port": 8080,
+                "subdomain": "http-db",
+            },
+        )
+        xtcp = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "xtcp",
+                "name": "xtcp-db",
+                "traffic_mb": 10,
+                "local_port": 8123,
+                "visitor_bind_port": 9001,
+            },
+        )
+        assert tcp.status_code == 200
+        assert http.status_code == 200
+        assert xtcp.status_code == 200
+
+        with sqlite3.connect(sqlite_persistence._DB_FILE) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+            assert conn.execute("SELECT COUNT(*) FROM proxies").fetchone()[0] == 3
+            assert conn.execute("SELECT COUNT(*) FROM tcp_mappings").fetchone()[0] == 1
+
+        store.reset()
+        port_pool.reset()
+        load_registered_users_unlocked(store)
+        _reserve_loaded_tcp_ports_unlocked()
+
+        assert registered["uid"] in store.users
+        assert len(store.proxies) == 3
+        restored_tcp = next(proxy for proxy in store.proxies.values() if proxy.name == "tcp-db")
+        restored_http = next(proxy for proxy in store.proxies.values() if proxy.name == "http-db")
+        restored_xtcp = next(proxy for proxy in store.proxies.values() if proxy.name == "xtcp-db")
+        assert restored_tcp.tcp_mappings[0].remote_port == 50000
+        assert restored_http.subdomain == "http-db"
+        assert restored_xtcp.visitor_bind_port == 9001
+        assert not port_pool.is_port_unreserved(50000)
 
 
 def test_user_auth_login_logout_and_persistence():

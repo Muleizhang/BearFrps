@@ -390,6 +390,7 @@ async def delete_proxy(proxy_id: int, user: User = Depends(require_user)) -> dic
             proxy.current_speed_bps = 0
             if proxy.proxy_type == ProxyType.TCP and proxy.frps_remote_port is not None:
                 port_pool.release_many([mapping.remote_port for mapping in proxy.tcp_mappings])
+            save_registered_users_unlocked(store)
     return {"ok": True}
 
 

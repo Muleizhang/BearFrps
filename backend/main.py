@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import ROOT_DIR
-from backend.deps import settings
+from backend.deps import port_pool, settings
 from backend.frps_client import FrpsClient
 from backend.frps_manager import FrpsManager
 from backend.plugin_handler import router as plugin_router
@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
     script_renderer.load()
     async with store.lock:
         load_registered_users_unlocked(store)
+        _reserve_loaded_tcp_ports_unlocked()
     await frps_manager.start()
     usage_poller.start()
     try:
@@ -53,6 +54,17 @@ async def lifespan(app: FastAPI):
     finally:
         await usage_poller.stop()
         await frps_manager.stop()
+
+
+def _reserve_loaded_tcp_ports_unlocked() -> None:
+    ports = [
+        mapping.remote_port
+        for proxy in store.proxies.values()
+        if proxy.status != "deleted"
+        for mapping in proxy.tcp_mappings
+    ]
+    if ports:
+        port_pool.reserve_many(ports)
 
 
 app = FastAPI(title="BearFrps Platform", lifespan=lifespan)

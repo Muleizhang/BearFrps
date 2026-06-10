@@ -22,12 +22,15 @@ from pathlib import Path
 
 from backend.config import ROOT_DIR
 from backend.models import Store, User
+from backend.sqlite_persistence import load_store_unlocked, save_store_unlocked
 
 
 _USERS_FILE = ROOT_DIR / "config" / "users.json"
 
 
 def load_registered_users_unlocked(store: Store) -> None:
+    if load_store_unlocked(store):
+        return
     try:
         if not _USERS_FILE.exists():
             return
@@ -55,6 +58,7 @@ def load_registered_users_unlocked(store: Store) -> None:
 
 
 def save_registered_users_unlocked(store: Store) -> None:
+    save_store_unlocked(store)
     users = [
         user.model_dump(mode="json")
         for user in sorted(store.users.values(), key=lambda u: u.uid)

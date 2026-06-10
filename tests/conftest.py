@@ -24,10 +24,11 @@ from backend.auth import clear_all_user_sessions
 
 @pytest.fixture(autouse=True)
 def reset_state(monkeypatch, tmp_path):
-    from backend import persist_config, user_persistence
+    from backend import persist_config, sqlite_persistence, user_persistence
 
     monkeypatch.setattr(persist_config, "_PERSIST_FILE", tmp_path / "allocatable_range.json")
     monkeypatch.setattr(user_persistence, "_USERS_FILE", tmp_path / "users.json")
+    monkeypatch.setattr(sqlite_persistence, "_DB_FILE", tmp_path / "bearfrps.db")
     _initial_range = port_pool.get_range()
     store.reset()
     clear_all_user_sessions()
