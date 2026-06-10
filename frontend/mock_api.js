@@ -1073,6 +1073,103 @@
       };
     },
 
+    "PATCH /api/proxies/": function (pathParts, body) {
+      var users = loadUsers();
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
+      var idStr = pathParts[0];
+      var proxies = loadProxies();
+      var proxy = proxies.find(function (p) { return String(p.id) === idStr && p.uid === user.uid && p.status !== "deleted"; });
+      if (!proxy) return { status: 404, body: { detail: "Not found" } };
+
+      var name = body.name == null ? null : String(body.name || "").trim();
+      if (name != null) {
+        if (!name) return { status: 400, body: { detail: "名称不能为空" } };
+        if (proxies.some(function (p) { return p.uid === user.uid && p.status !== "deleted" && String(p.id) !== idStr && p.name === name; })) {
+          return { status: 400, body: { detail: "名称重复" } };
+        }
+        proxy.name = name;
+      }
+      if (body.local_ip != null) {
+        var localIp = String(body.local_ip || "127.0.0.1").trim();
+        if (!/^[A-Za-z0-9.-]{1,253}$/.test(localIp)) return { status: 400, body: { detail: "本地地址格式不合法" } };
+        proxy.local_ip = localIp;
+      }
+      if (body.local_port != null) {
+        var localPort = Number(body.local_port);
+        if (!localPort || localPort < 1 || localPort > 65535) return { status: 400, body: { detail: "请输入有效本地端口" } };
+        if ((proxy.proxy_type || "tcp") === "tcp" && proxy.tcp_mappings && proxy.tcp_mappings.length) {
+          var offset = localPort - Number(proxy.tcp_mappings[0].local_port);
+          for (var i = 0; i < proxy.tcp_mappings.length; i++) {
+            var nextPort = Number(proxy.tcp_mappings[i].local_port) + offset;
+            if (nextPort < 1 || nextPort > 65535) return { status: 400, body: { detail: "本地端口段必须在 1-65535 之间" } };
+            proxy.tcp_mappings[i].local_port = nextPort;
+            proxy.tcp_mappings[i].actual_local_port = nextPort;
+          }
+          proxy.local_port = proxy.tcp_mappings[0].local_port;
+          proxy.actual_local_port = proxy.tcp_mappings[0].actual_local_port;
+        } else {
+          proxy.local_port = localPort;
+          proxy.actual_local_port = localPort;
+        }
+      }
+      if (body.speed_limit_kbps != null) proxy.speed_limit_kbps = Number(body.speed_limit_kbps);
+      if (body.traffic_mb != null) {
+        var trafficMb = Number(body.traffic_mb);
+        if (!trafficMb || trafficMb < 1) return { status: 400, body: { detail: "请输入流量额度" } };
+        if (trafficMb * 1024 * 1024 < Number(proxy.traffic_used_bytes || 0)) return { status: 400, body: { detail: "分配流量不能小于已用流量" } };
+        if ((proxy.proxy_type || "tcp") !== "xtcp" && trafficMb > proxy.traffic_limit_mb) {
+          var extra = trafficMb - proxy.traffic_limit_mb;
+          if (extra > user.balance_mb) return { status: 400, body: { detail: "余额不足" } };
+          user.balance_mb -= extra;
+          users[user.uid] = user;
+          saveUsers(users);
+        }
+        proxy.traffic_limit_mb = trafficMb;
+      }
+      if ((proxy.proxy_type || "tcp") === "http" && body.subdomain != null) {
+        var subdomain = String(body.subdomain || "").trim().toLowerCase();
+        if (!/^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/.test(subdomain)) {
+          return { status: 400, body: { detail: "子域名需为 3-63 位小写字母、数字或连字符" } };
+        }
+        if (proxies.some(function (p) { return p.status !== "deleted" && (p.proxy_type || "tcp") === "http" && String(p.id) !== idStr && p.subdomain === subdomain; })) {
+          return { status: 400, body: { detail: "子域名已被占用" } };
+        }
+        proxy.subdomain = subdomain;
+      }
+      if ((proxy.proxy_type || "tcp") === "xtcp" && body.visitor_bind_port != null) {
+        var visitorPort = Number(body.visitor_bind_port);
+        if (!visitorPort || visitorPort < 1 || visitorPort > 65535) return { status: 400, body: { detail: "请输入有效访问端监听端口" } };
+        proxy.visitor_bind_port = visitorPort;
+      }
+      if (body.advanced_config) {
+        var advanced = normalizeAdvancedConfig(body.advanced_config, proxy.proxy_type || "tcp");
+        if (advanced.error) return { status: 400, body: { detail: advanced.error } };
+        proxy.use_encryption = advanced.use_encryption;
+        proxy.use_compression = advanced.use_compression;
+        proxy.bandwidth_limit_mode = advanced.bandwidth_limit_mode;
+        proxy.http_user = advanced.http_user;
+        proxy.http_password = advanced.http_password;
+        proxy.http_locations = advanced.http_locations;
+        proxy.host_header_rewrite = advanced.host_header_rewrite;
+        if ((proxy.proxy_type || "tcp") === "xtcp") {
+          proxy.keep_tunnel_open = advanced.keep_tunnel_open;
+          proxy.fallback_timeout_ms = advanced.fallback_timeout_ms;
+        }
+      }
+      proxy = withPublicUrl(proxy);
+      saveProxies(proxies);
+      return {
+        status: 200,
+        body: {
+          proxy: proxy,
+          frpc_config: makeFrpcConfig(proxy),
+          frpc_configs: makeFrpcConfigs(proxy),
+          scripts: makeScripts(proxy)
+        }
+      };
+    },
+
     "DELETE /api/proxies/": function (pathParts) {
       var user = requireUser();
       if (!user) return { status: 401, body: { detail: "user login required" } };
@@ -1280,6 +1377,10 @@
     if (method === "GET" && path.match(/^\/api\/proxies\/\d+\/scripts$/)) {
       var idPart = path.replace("/api/proxies/", "").replace("/scripts", "");
       return mockResponse(routes["GET /api/proxies/"]([idPart]));
+    }
+    if (method === "PATCH" && path.match(/^\/api\/proxies\/\d+$/)) {
+      var idPart6 = path.replace("/api/proxies/", "");
+      return mockResponse(routes["PATCH /api/proxies/"]([idPart6], body));
     }
     if (method === "DELETE" && path.match(/^\/api\/proxies\/\d+$/)) {
       var idPart2 = path.replace("/api/proxies/", "");

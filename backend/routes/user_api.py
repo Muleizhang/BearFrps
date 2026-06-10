@@ -186,6 +186,17 @@ class CreateProxyRequest(BaseModel):
     advanced_config: AdvancedConfigRequest | None = None
 
 
+class UpdateProxyRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=20)
+    traffic_mb: int | None = Field(default=None, gt=0)
+    speed_limit_kbps: int | None = Field(default=None, gt=0)
+    local_ip: str | None = None
+    local_port: int | None = Field(default=None, ge=1, le=65535)
+    subdomain: str | None = None
+    visitor_bind_port: int | None = Field(default=None, ge=1, le=65535)
+    advanced_config: AdvancedConfigRequest | None = None
+
+
 class UserAuthRequest(BaseModel):
     username: str
     password: str
@@ -382,6 +393,72 @@ async def delete_proxy(proxy_id: int, user: User = Depends(require_user)) -> dic
     return {"ok": True}
 
 
+@router.patch("/api/proxies/{proxy_id}")
+async def update_proxy(
+    proxy_id: int,
+    body: UpdateProxyRequest,
+    user: User = Depends(require_user),
+) -> dict[str, object]:
+    async with store.lock:
+        current = store.ensure_user_unlocked(user.uid)
+        proxy = store.proxies.get(proxy_id)
+        if proxy is None or proxy.uid != current.uid or proxy.status == ProxyStatus.DELETED:
+            raise HTTPException(status_code=404, detail="proxy not found")
+
+        name = body.name.strip() if body.name is not None else None
+        if name is not None:
+            if not name:
+                raise HTTPException(status_code=400, detail="名称不能为空")
+            if store.user_has_name_unlocked(current.uid, name, exclude_id=proxy.id):
+                raise HTTPException(status_code=400, detail="名称重复")
+            proxy.name = name
+
+        if body.local_ip is not None:
+            proxy.local_ip = _normalize_local_ip(body.local_ip)
+
+        if body.local_port is not None:
+            if proxy.proxy_type == ProxyType.TCP:
+                _update_tcp_local_ports(proxy, body.local_port)
+            else:
+                proxy.local_port = body.local_port
+                proxy.actual_local_port = body.local_port
+
+        if body.speed_limit_kbps is not None:
+            proxy.speed_limit_kbps = body.speed_limit_kbps
+
+        if body.traffic_mb is not None:
+            _update_traffic_limit_unlocked(current, proxy, body.traffic_mb)
+
+        if proxy.proxy_type == ProxyType.HTTP and body.subdomain is not None:
+            subdomain = _normalize_subdomain(body.subdomain)
+            if subdomain != proxy.subdomain and store.find_proxy_by_subdomain_unlocked(
+                subdomain, exclude_id=proxy.id
+            ):
+                raise HTTPException(status_code=400, detail="子域名已被占用")
+            proxy.subdomain = subdomain
+
+        if proxy.proxy_type == ProxyType.XTCP and body.visitor_bind_port is not None:
+            proxy.visitor_bind_port = body.visitor_bind_port
+
+        if body.advanced_config is not None:
+            advanced_config = _normalize_advanced_config(proxy.proxy_type, body.advanced_config)
+            proxy.use_encryption = advanced_config["use_encryption"]
+            proxy.use_compression = advanced_config["use_compression"]
+            proxy.bandwidth_limit_mode = advanced_config["bandwidth_limit_mode"]
+            proxy.http_user = advanced_config["http_user"]
+            proxy.http_password = advanced_config["http_password"]
+            proxy.http_locations = advanced_config["http_locations"]
+            proxy.host_header_rewrite = advanced_config["host_header_rewrite"]
+            if proxy.proxy_type == ProxyType.XTCP:
+                proxy.keep_tunnel_open = advanced_config["keep_tunnel_open"]
+                proxy.fallback_timeout_ms = advanced_config["fallback_timeout_ms"]
+
+        dto = _add_public_url(store.proxy_to_dto(proxy))
+        save_registered_users_unlocked(store)
+
+    return _proxy_scripts_response(proxy, dto)
+
+
 @router.get("/api/proxies/{proxy_id}/scripts")
 async def get_proxy_scripts(proxy_id: int, user: User = Depends(require_user)) -> dict[str, object]:
     async with store.lock:
@@ -560,6 +637,35 @@ def _local_ports_from_start(start: int, count: int) -> list[int]:
     if start < 1 or start + count - 1 > 65535:
         raise HTTPException(status_code=400, detail="本地端口段必须在 1-65535 之间")
     return list(range(start, start + count))
+
+
+def _update_tcp_local_ports(proxy: Proxy, local_port: int) -> None:
+    if not proxy.tcp_mappings:
+        proxy.local_port = local_port
+        proxy.actual_local_port = local_port
+        return
+    first_local_port = proxy.tcp_mappings[0].local_port
+    offset = local_port - first_local_port
+    next_local_ports = [mapping.local_port + offset for mapping in proxy.tcp_mappings]
+    for next_local_port in next_local_ports:
+        if next_local_port < 1 or next_local_port > 65535:
+            raise HTTPException(status_code=400, detail="本地端口段必须在 1-65535 之间")
+    for mapping, next_local_port in zip(proxy.tcp_mappings, next_local_ports, strict=True):
+        mapping.local_port = next_local_port
+        mapping.actual_local_port = next_local_port
+    proxy.local_port = proxy.tcp_mappings[0].local_port
+    proxy.actual_local_port = proxy.tcp_mappings[0].actual_local_port
+
+
+def _update_traffic_limit_unlocked(user: User, proxy: Proxy, traffic_mb: int) -> None:
+    if traffic_mb * 1024 * 1024 < proxy.traffic_used_bytes:
+        raise HTTPException(status_code=400, detail="分配流量不能小于已用流量")
+    if proxy.proxy_type != ProxyType.XTCP and traffic_mb > proxy.traffic_limit_mb:
+        extra_mb = traffic_mb - proxy.traffic_limit_mb
+        if extra_mb > user.balance_mb:
+            raise HTTPException(status_code=400, detail="余额不足")
+        user.balance_mb -= extra_mb
+    proxy.traffic_limit_mb = traffic_mb
 
 
 def _reserve_requested_remote_ports(ports: list[int]) -> None:

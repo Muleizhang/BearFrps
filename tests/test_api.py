@@ -667,6 +667,176 @@ def test_create_proxy_advanced_config_validation_errors():
         assert bad_timeout.status_code == 400
 
 
+def test_update_tcp_proxy_ignores_remote_port_and_updates_local_config():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+        client.post("/api/user/recharge", json={})
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "name": "tcp-edit",
+                "traffic_mb": 10,
+                "tcp_ports": {"mode": "single", "remote_port": 50000, "local_port": 9528},
+            },
+        )
+        assert created.status_code == 200
+        proxy = created.json()["proxy"]
+
+        updated = client.patch(
+            f"/api/proxies/{proxy['id']}",
+            json={
+                "name": "tcp-edited",
+                "local_ip": "localhost",
+                "local_port": 9530,
+                "traffic_mb": 12,
+                "speed_limit_kbps": 2048,
+                "frps_remote_port": 50001,
+                "tcp_ports": {"mode": "single", "remote_port": 50001, "local_port": 9530},
+                "advanced_config": {
+                    "use_encryption": True,
+                    "use_compression": True,
+                    "bandwidth_limit_mode": "client",
+                },
+            },
+        )
+        assert updated.status_code == 200
+        body = updated.json()
+        proxy = body["proxy"]
+        assert proxy["name"] == "tcp-edited"
+        assert proxy["local_ip"] == "localhost"
+        assert proxy["local_port"] == 9530
+        assert proxy["frps_remote_port"] == 50000
+        assert proxy["tcp_mappings"][0]["remote_port"] == 50000
+        assert proxy["tcp_mappings"][0]["local_port"] == 9530
+        assert proxy["traffic_limit_mb"] == 12
+        assert proxy["speed_limit_kbps"] == 2048
+        assert "remotePort = 50000" in body["frpc_config"]
+        assert "remotePort = 50001" not in body["frpc_config"]
+        assert "localPort = 9530" in body["frpc_config"]
+        assert "transport.useEncryption = true" in body["frpc_config"]
+        assert "transport.useCompression = true" in body["frpc_config"]
+        assert 'transport.bandwidthLimitMode = "client"' in body["frpc_config"]
+
+
+def test_update_http_proxy_checks_subdomain_and_updates_http_config():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+
+        first = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "http",
+                "name": "site-a",
+                "traffic_mb": 10,
+                "local_port": 8080,
+                "subdomain": "site-a",
+            },
+        )
+        second = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "http",
+                "name": "site-b",
+                "traffic_mb": 10,
+                "local_port": 8081,
+                "subdomain": "site-b",
+            },
+        )
+        assert first.status_code == 200
+        assert second.status_code == 200
+
+        conflict = client.patch(
+            f"/api/proxies/{first.json()['proxy']['id']}",
+            json={"subdomain": "site-b"},
+        )
+        assert conflict.status_code == 400
+
+        updated = client.patch(
+            f"/api/proxies/{first.json()['proxy']['id']}",
+            json={
+                "name": "site-edited",
+                "local_ip": "localhost",
+                "local_port": 9090,
+                "subdomain": "site-c",
+                "advanced_config": {
+                    "http_user": "demo",
+                    "http_password": "secret",
+                    "http_locations": ["/api"],
+                    "host_header_rewrite": "localhost:9090",
+                    "use_encryption": True,
+                },
+            },
+        )
+        assert updated.status_code == 200
+        body = updated.json()
+        proxy = body["proxy"]
+        assert proxy["subdomain"] == "site-c"
+        assert proxy["public_url"].startswith("http://site-c.")
+        assert proxy["http_locations"] == ["/api"]
+        assert proxy["host_header_rewrite"] == "localhost:9090"
+        assert 'subdomain = "site-c"' in body["frpc_config"]
+        assert 'locations = ["/api"]' in body["frpc_config"]
+        assert 'hostHeaderRewrite = "localhost:9090"' in body["frpc_config"]
+
+
+def test_update_xtcp_proxy_ignores_handshake_fields():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "xtcp",
+                "name": "phone",
+                "traffic_mb": 10,
+                "local_port": 8123,
+                "visitor_bind_port": 9001,
+            },
+        )
+        assert created.status_code == 200
+        original = created.json()["proxy"]
+
+        updated = client.patch(
+            f"/api/proxies/{original['id']}",
+            json={
+                "name": "phone-edited",
+                "local_ip": "localhost",
+                "local_port": 8124,
+                "visitor_bind_port": 9100,
+                "traffic_mb": 20,
+                "speed_limit_kbps": 512,
+                "token": "evil-token",
+                "metadatas": {"uid": "u_evil"},
+                "p2p_secret_key": "evil-secret",
+                "advanced_config": {
+                    "keep_tunnel_open": False,
+                    "fallback_timeout_ms": 1500,
+                    "use_compression": True,
+                },
+            },
+        )
+        assert updated.status_code == 200
+        body = updated.json()
+        proxy = body["proxy"]
+        assert proxy["name"] == "phone-edited"
+        assert proxy["local_ip"] == "localhost"
+        assert proxy["local_port"] == 8124
+        assert proxy["visitor_bind_port"] == 9100
+        assert proxy["p2p_secret_key"] == original["p2p_secret_key"]
+        assert proxy["token"] == original["token"]
+        assert proxy["traffic_limit_mb"] == 20
+        assert proxy["speed_limit_kbps"] == 512
+        assert proxy["keep_tunnel_open"] is False
+        assert proxy["fallback_timeout_ms"] == 1500
+        assert "evil-secret" not in body["frpc_configs"]["visitor"]
+        assert "bindPort = 9100" in body["frpc_configs"]["visitor"]
+        assert "fallbackTimeoutMs = 1500" in body["frpc_configs"]["visitor"]
+
+
 def test_user_auth_login_logout_and_persistence():
     with TestClient(app) as client:
         registered = register_user(client, username="persisted")

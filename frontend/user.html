@@ -401,6 +401,7 @@
                 </div>
               </td>
               <td class="space-x-1">
+                <button class="btn btn-secondary btn-sm" @click="openEditProxy(p)">修改配置</button>
                 <button class="btn btn-secondary btn-sm" @click="viewScripts(p)">查看脚本</button>
                 <button class="btn btn-danger btn-sm" @click="deleteProxy(p)">删除</button>
               </td>
@@ -714,6 +715,118 @@
     </div>
   </div>
 
+  <div x-show="openEditModal" class="modal-overlay" @click.self="openEditModal = false" x-cloak>
+    <div class="modal-content p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold text-lg">修改连接配置</h3>
+        <button @click="openEditModal = false" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+      </div>
+      <div class="space-y-4" x-show="editForm">
+        <div class="text-xs text-gray-500">
+          <span>公网端口、Token、P2P 密钥等平台分配字段不会被修改。</span>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-600 mb-1">名称</label>
+          <input class="input" x-model="editForm.name" maxlength="20">
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1" x-text="editForm.proxy_type === 'xtcp' ? '电脑本地地址' : '本地地址'"></label>
+            <input class="input" x-model.trim="editForm.local_ip">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1" x-text="editForm.proxy_type === 'xtcp' ? '电脑本地端口' : '本地端口'"></label>
+            <input class="input" type="number" x-model.number="editForm.local_port" min="1" max="65535">
+          </div>
+        </div>
+        <div x-show="editForm.proxy_type === 'http'">
+          <label class="block text-sm font-medium text-gray-600 mb-1">平台子域名前缀</label>
+          <input class="input font-mono" x-model.trim="editForm.subdomain">
+        </div>
+        <div x-show="editForm.proxy_type === 'xtcp'">
+          <label class="block text-sm font-medium text-gray-600 mb-1">手机访问端监听端口</label>
+          <input class="input" type="number" x-model.number="editForm.visitor_bind_port" min="1" max="65535">
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">分配流量 / fallback 限额 (MB)</label>
+            <input class="input" type="number" x-model.number="editForm.traffic_mb" min="1">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">限速 KB/s</label>
+            <input class="input" type="number" x-model.number="editForm.speed_limit_kbps" min="1">
+          </div>
+        </div>
+        <div class="border border-gray-200 rounded-md overflow-hidden">
+          <button type="button"
+                  class="w-full px-3 py-2 bg-gray-50 text-sm font-medium text-gray-700 flex items-center justify-between hover:bg-gray-100 transition-colors"
+                  @click="editAdvancedOpen = !editAdvancedOpen">
+            <span>高级配置</span>
+            <span class="text-xs text-gray-500" x-text="editAdvancedOpen ? '收起' : '展开'"></span>
+          </button>
+          <div class="p-3 space-y-4" x-show="editAdvancedOpen">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label class="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" class="rounded border-gray-300" x-model="editForm.advanced.use_encryption">
+                <span>启用传输加密</span>
+              </label>
+              <label class="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" class="rounded border-gray-300" x-model="editForm.advanced.use_compression">
+                <span>启用传输压缩</span>
+              </label>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">限速位置</label>
+              <div class="flex gap-1 rounded-md bg-gray-100 p-1">
+                <button type="button" class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                        :class="editForm.advanced.bandwidth_limit_mode === 'server' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                        @click="editForm.advanced.bandwidth_limit_mode = 'server'">服务端</button>
+                <button type="button" class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                        :class="editForm.advanced.bandwidth_limit_mode === 'client' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                        @click="editForm.advanced.bandwidth_limit_mode = 'client'">客户端</button>
+              </div>
+            </div>
+            <div class="space-y-3" x-show="editForm.proxy_type === 'http'">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-600 mb-1">HTTP 认证用户名</label>
+                  <input class="input" x-model.trim="editForm.advanced.http_user" maxlength="64">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-600 mb-1">HTTP 认证密码</label>
+                  <input class="input" type="password" x-model="editForm.advanced.http_password" maxlength="128">
+                </div>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">HTTP 路径</label>
+                <textarea class="input min-h-[76px]" x-model="editForm.advanced.http_locations_text" placeholder="/,/api"></textarea>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">Host 改写</label>
+                <input class="input" x-model.trim="editForm.advanced.host_header_rewrite" placeholder="example.com">
+              </div>
+            </div>
+            <div class="space-y-3" x-show="editForm.proxy_type === 'xtcp'">
+              <label class="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" class="rounded border-gray-300" x-model="editForm.advanced.keep_tunnel_open">
+                <span>保持 P2P 隧道</span>
+              </label>
+              <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">fallback 超时 ms</label>
+                <input class="input" type="number" x-model.number="editForm.advanced.fallback_timeout_ms" min="100" max="10000">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div x-show="editError" class="text-red-600 text-sm" x-text="editError"></div>
+        <div class="flex justify-end gap-2">
+          <button class="btn btn-secondary" @click="openEditModal = false">取消</button>
+          <button class="btn btn-primary" @click="updateProxy()" :disabled="editing" x-text="editing ? '保存中...' : '保存并生成脚本'"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div x-show="openScriptModal" class="modal-overlay" @click.self="openScriptModal = false" x-cloak>
     <div class="modal-content p-6">
       <div class="flex items-center justify-between mb-4">
@@ -818,8 +931,10 @@
         authLoading: false,
         recharging: false,
         openCreateModal: false,
+        openEditModal: false,
         openScriptModal: false,
         advancedOpen: false,
+        editAdvancedOpen: true,
         createType: 'tcp',
         createForms: {
           tcp: {
@@ -844,6 +959,9 @@
         createError: '',
         creating: false,
         createResult: null,
+        editForm: null,
+        editError: '',
+        editing: false,
         scriptData: null,
         pollTimer: null,
 
@@ -871,8 +989,10 @@
           this.frpcTokenRotatedAt = '';
           this.proxies = [];
           this.openCreateModal = false;
+          this.openEditModal = false;
           this.openScriptModal = false;
           this.createResult = null;
+          this.editForm = null;
           this.scriptData = null;
           this.stopPolling();
         },
@@ -1062,6 +1182,147 @@
           const data = await res.json();
           this.scriptData = data;
           this.openScriptModal = true;
+        },
+
+        openEditProxy(proxy) {
+          var advanced = defaultAdvancedConfig();
+          advanced.use_encryption = !!proxy.use_encryption;
+          advanced.use_compression = !!proxy.use_compression;
+          advanced.bandwidth_limit_mode = proxy.bandwidth_limit_mode === 'client' ? 'client' : 'server';
+          advanced.http_user = proxy.http_user || '';
+          advanced.http_password = proxy.http_password || '';
+          advanced.http_locations_text = Array.isArray(proxy.http_locations) ? proxy.http_locations.join('\n') : '';
+          advanced.host_header_rewrite = proxy.host_header_rewrite || '';
+          advanced.keep_tunnel_open = proxy.keep_tunnel_open !== false;
+          advanced.fallback_timeout_ms = proxy.fallback_timeout_ms || 1000;
+          this.editForm = {
+            id: proxy.id,
+            proxy_type: proxy.proxy_type,
+            name: proxy.name || '',
+            local_ip: proxy.local_ip || '127.0.0.1',
+            local_port: proxy.local_port || 9527,
+            subdomain: proxy.subdomain || '',
+            visitor_bind_port: proxy.visitor_bind_port || 9001,
+            traffic_mb: proxy.traffic_limit_mb || 1,
+            speed_limit_kbps: proxy.speed_limit_kbps || 1024,
+            advanced: advanced
+          };
+          this.editError = '';
+          this.editAdvancedOpen = true;
+          this.openEditModal = true;
+        },
+
+        buildEditAdvancedConfigPayload() {
+          var form = this.editForm;
+          var advanced = form.advanced || defaultAdvancedConfig();
+          var payload = {
+            use_encryption: !!advanced.use_encryption,
+            use_compression: !!advanced.use_compression,
+            bandwidth_limit_mode: advanced.bandwidth_limit_mode === 'client' ? 'client' : 'server'
+          };
+          if (form.proxy_type === 'http') {
+            var httpUser = String(advanced.http_user || '').trim();
+            var httpPassword = String(advanced.http_password || '').trim();
+            if ((httpUser && !httpPassword) || (!httpUser && httpPassword)) {
+              this.editError = 'HTTP 认证用户名和密码需同时填写';
+              return null;
+            }
+            if (httpUser) {
+              payload.http_user = httpUser;
+              payload.http_password = httpPassword;
+            }
+            var locations = this.parseEditHttpLocations(advanced.http_locations_text);
+            if (!locations) return null;
+            if (locations.length) payload.http_locations = locations;
+            var hostHeader = String(advanced.host_header_rewrite || '').trim();
+            if (hostHeader) {
+              if (!this.validateEditHostHeader(hostHeader)) return null;
+              payload.host_header_rewrite = hostHeader;
+            }
+          }
+          if (form.proxy_type === 'xtcp') {
+            var fallbackTimeout = advanced.fallback_timeout_ms === '' || advanced.fallback_timeout_ms == null ? 1000 : Number(advanced.fallback_timeout_ms);
+            if (!fallbackTimeout || fallbackTimeout < 100 || fallbackTimeout > 10000) {
+              this.editError = 'fallback 超时需在 100-10000 ms 之间';
+              return null;
+            }
+            payload.keep_tunnel_open = !!advanced.keep_tunnel_open;
+            payload.fallback_timeout_ms = fallbackTimeout;
+          }
+          return payload;
+        },
+
+        async updateProxy() {
+          this.editError = '';
+          var form = this.editForm;
+          if (!form) return;
+          if (!String(form.name || '').trim()) { this.editError = '请输入名称'; return; }
+          if (!this.validateEditPort(form.local_port, form.proxy_type === 'xtcp' ? '电脑本地端口' : '本地端口')) return;
+          if (!form.traffic_mb || form.traffic_mb < 1) { this.editError = '请输入流量额度'; return; }
+          if (!form.speed_limit_kbps || form.speed_limit_kbps < 1) { this.editError = '请输入有效限速'; return; }
+          var payload = {
+            name: form.name,
+            local_ip: form.local_ip,
+            local_port: Number(form.local_port),
+            traffic_mb: Number(form.traffic_mb),
+            speed_limit_kbps: Number(form.speed_limit_kbps),
+            advanced_config: this.buildEditAdvancedConfigPayload()
+          };
+          if (!payload.advanced_config) return;
+          if (form.proxy_type === 'http') {
+            if (!String(form.subdomain || '').trim()) { this.editError = '请输入子域名前缀'; return; }
+            payload.subdomain = form.subdomain;
+          }
+          if (form.proxy_type === 'xtcp') {
+            if (!this.validateEditPort(form.visitor_bind_port, '手机访问端监听端口')) return;
+            payload.visitor_bind_port = Number(form.visitor_bind_port);
+          }
+          this.editing = true;
+          try {
+            const res = await fetch('/api/proxies/' + form.id, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify(payload)
+            });
+            if (this.handleUnauthorized(res)) return;
+            const data = await res.json();
+            if (!res.ok) { this.editError = extractDetail(data) || '保存失败'; return; }
+            this.scriptData = data;
+            this.openEditModal = false;
+            this.openScriptModal = true;
+            await this.loadUser();
+            await this.loadProxies();
+            toast('配置已更新');
+          } finally {
+            this.editing = false;
+          }
+        },
+
+        parseEditHttpLocations(text) {
+          var previous = this.createError;
+          this.createError = '';
+          var locations = this.parseHttpLocations(text);
+          if (!locations) this.editError = this.createError || 'HTTP 路径不合法';
+          this.createError = previous;
+          return locations;
+        },
+
+        validateEditHostHeader(value) {
+          var previous = this.createError;
+          this.createError = '';
+          var ok = this.validateHostHeader(value);
+          if (!ok) this.editError = this.createError || 'Host 改写格式不合法';
+          this.createError = previous;
+          return ok;
+        },
+
+        validateEditPort(value, label) {
+          if (!value || value < 1 || value > 65535) {
+            this.editError = '请输入有效' + label;
+            return false;
+          }
+          return true;
         },
 
         async deleteProxy(proxy) {
