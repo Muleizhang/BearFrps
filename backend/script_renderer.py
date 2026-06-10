@@ -304,8 +304,7 @@ def _toml_array(values: list[str]) -> str:
     return "[" + ", ".join(f'"{_toml_str(value)}"' for value in values) + "]"
 
 
-FRPC_UNIX_FALLBACK = r"""#!/bin/bash
-set -e
+FRPC_UNIX_FALLBACK = r"""set -e
 
 echo "=== frpc 启动脚本 ==="
 FRP_VERSION="{{FRP_VERSION}}"
@@ -367,8 +366,7 @@ Write-Host "启动 frpc"
 """
 
 
-DEMO_UNIX_FALLBACK = r"""#!/bin/bash
-set -e
+DEMO_UNIX_FALLBACK = r"""set -e
 
 echo "=== Demo 留言板服务启动脚本 ==="
 printf "本地端口 [默认 {{DEFAULT_LOCAL_PORT}}]: "
