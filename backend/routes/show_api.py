@@ -69,7 +69,7 @@ def _public_urls(proxy) -> list[str]:
     if proxy.proxy_type == ProxyType.HTTP:
         if not proxy.subdomain:
             return []
-        port = settings.frps_vhost_http_port
+        port = settings.public_vhost_http_port
         port_part = "" if port == 80 else f":{port}"
         return [f"http://{proxy.subdomain}.{settings.effective_subdomain_host}{port_part}/"]
     if proxy.proxy_type != ProxyType.TCP:

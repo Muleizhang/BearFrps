@@ -116,7 +116,7 @@ def _add_public_url(dto: dict[str, object]) -> dict[str, object]:
     if dto.get("proxy_type") == ProxyType.HTTP.value:
         subdomain = dto.get("subdomain")
         if subdomain:
-            port = settings.frps_vhost_http_port
+            port = settings.public_vhost_http_port
             port_part = "" if port == 80 else f":{port}"
             dto["public_url"] = (
                 f"http://{subdomain}.{settings.effective_subdomain_host}{port_part}/"

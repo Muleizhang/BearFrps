@@ -42,6 +42,7 @@ class Settings(BaseModel):
     frps_admin_password: str = "changeme"
     frps_auth_token: str = "bearfrps-internal"
     frps_vhost_http_port: int = 8080
+    frps_public_vhost_http_port: int = 0
     frps_subdomain_host: str = ""
     frps_nathole_analysis_data_reserve_hours: int = 168
 
@@ -61,12 +62,20 @@ class Settings(BaseModel):
     admin_password: str = "changeme"
     max_connections_per_user: int = 3
 
+    demo_bin_base_url_override: str = ""
+
     @property
     def frp_version_without_v(self) -> str:
         return self.frps_version[1:] if self.frps_version.startswith("v") else self.frps_version
 
     @property
+    def public_vhost_http_port(self) -> int:
+        return self.frps_public_vhost_http_port or self.frps_vhost_http_port
+
+    @property
     def demo_bin_base_url(self) -> str:
+        if self.demo_bin_base_url_override:
+            return self.demo_bin_base_url_override
         return f"http://{self.server_public_host}:{self.backend_port}/static/demo-server-bin"
 
     @property
@@ -93,6 +102,9 @@ def get_settings() -> Settings:
         frps_auth_token=_env_str("FRPS_AUTH_TOKEN", defaults.frps_auth_token),
         frps_vhost_http_port=_env_int(
             "FRPS_VHOST_HTTP_PORT", defaults.frps_vhost_http_port
+        ),
+        frps_public_vhost_http_port=_env_int(
+            "FRPS_PUBLIC_VHOST_HTTP_PORT", defaults.frps_public_vhost_http_port
         ),
         frps_subdomain_host=_env_str(
             "FRPS_SUBDOMAIN_HOST", defaults.frps_subdomain_host
@@ -129,6 +141,9 @@ def get_settings() -> Settings:
         admin_password=_env_str("ADMIN_PASSWORD", defaults.admin_password),
         max_connections_per_user=_env_int(
             "MAX_CONNECTIONS_PER_USER", defaults.max_connections_per_user
+        ),
+        demo_bin_base_url_override=_env_str(
+            "DEMO_BIN_BASE_URL", defaults.demo_bin_base_url_override
         ),
     )
 
