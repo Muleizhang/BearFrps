@@ -18,6 +18,7 @@ class ProxyStatus(StrEnum):
 class ProxyType(StrEnum):
     TCP = "tcp"
     HTTP = "http"
+    XTCP = "xtcp"
 
 
 class TcpMapping(BaseModel):
@@ -63,6 +64,14 @@ class Proxy(BaseModel):
     local_port: int = 9527
     subdomain: str | None = None
     tcp_mappings: list[TcpMapping] = Field(default_factory=list)
+    p2p_secret_key: str | None = None
+    p2p_fallback_name: str | None = None
+    visitor_bind_addr: str = "127.0.0.1"
+    visitor_bind_port: int = 9001
+    keep_tunnel_open: bool = True
+    fallback_timeout_ms: int = 1000
+    p2p_xtcp_is_online: bool = False
+    p2p_fallback_is_online: bool = False
     actual_local_port: int | None = None
     status: ProxyStatus = ProxyStatus.ACTIVE
     is_online: bool = False
@@ -192,6 +201,11 @@ class Store:
             if proxy.frps_name == frps_name:
                 return proxy
             if (
+                proxy.proxy_type == ProxyType.XTCP
+                and proxy.p2p_fallback_name == frps_name
+            ):
+                return proxy
+            if (
                 proxy.proxy_type == ProxyType.TCP
                 and any(mapping.frps_name == frps_name for mapping in proxy.tcp_mappings)
             ):
@@ -219,6 +233,7 @@ class Store:
         return {
             "id": proxy.id,
             "name": proxy.name,
+            "frps_name": proxy.frps_name,
             "token": proxy.token,
             "proxy_type": proxy.proxy_type.value,
             "frps_remote_port": proxy.frps_remote_port,
@@ -226,6 +241,15 @@ class Store:
             "local_port": proxy.local_port,
             "subdomain": proxy.subdomain,
             "tcp_mappings": tcp_mappings,
+            "p2p_secret_key": proxy.p2p_secret_key,
+            "p2p_fallback_name": proxy.p2p_fallback_name,
+            "visitor_bind_addr": proxy.visitor_bind_addr,
+            "visitor_bind_port": proxy.visitor_bind_port,
+            "visitor_endpoint": f"{proxy.visitor_bind_addr}:{proxy.visitor_bind_port}",
+            "keep_tunnel_open": proxy.keep_tunnel_open,
+            "fallback_timeout_ms": proxy.fallback_timeout_ms,
+            "p2p_xtcp_is_online": proxy.p2p_xtcp_is_online,
+            "p2p_fallback_is_online": proxy.p2p_fallback_is_online,
             "actual_local_port": proxy.actual_local_port,
             "status": proxy.status.value,
             "is_online": proxy.is_online,

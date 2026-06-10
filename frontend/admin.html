@@ -98,7 +98,7 @@
                     <td class="font-medium" x-text="p.name"></td>
                     <td>
                       <span class="status-badge"
-                            :class="p.proxy_type === 'http' ? 'badge-online' : 'badge-offline'"
+                            :class="proxyTypeBadge(p)"
                             x-text="proxyTypeLabel(p)"></span>
                     </td>
                     <td class="font-mono text-sm max-w-[260px] truncate">
@@ -376,7 +376,15 @@
         },
 
         proxyTypeLabel(p) {
-          return p.proxy_type === 'http' ? 'HTTP' : 'TCP';
+          if (p.proxy_type === 'http') return 'HTTP';
+          if (p.proxy_type === 'xtcp') return 'P2P';
+          return 'TCP';
+        },
+
+        proxyTypeBadge(p) {
+          if (p.proxy_type === 'http') return 'badge-online';
+          if (p.proxy_type === 'xtcp') return 'badge-disabled';
+          return 'badge-offline';
         },
 
         publicEntry(p) {
@@ -388,12 +396,14 @@
             }
             if (p.frps_remote_port != null) return String(p.frps_remote_port);
           }
+          if (p.proxy_type === 'xtcp') return p.visitor_endpoint || '127.0.0.1:9001';
           if (p.public_url) return p.public_url.replace(/^https?:\/\//, '').replace(/\/$/, '');
           return '-';
         },
 
         localEndpoint(p) {
           var ip = p.local_ip || '127.0.0.1';
+          if (p.proxy_type === 'xtcp') return ip + ':' + p.local_port;
           if (p.proxy_type === 'tcp') {
             var mappings = this.tcpMappings(p);
             if (mappings.length) return ip + ':' + this.localPortSummary(mappings);
@@ -434,6 +444,7 @@
 
         mappingDetails(p) {
           var ip = (p && p.local_ip) || '127.0.0.1';
+          if (p && p.proxy_type === 'xtcp') return '手机端 ' + (p.visitor_endpoint || '127.0.0.1:9001') + '\n电脑端 ' + ip + ':' + p.local_port;
           return this.tcpMappings(p).map(function (m) {
             return m.remote_port + ' -> ' + ip + ':' + m.local_port;
           }).join('\n');

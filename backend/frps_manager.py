@@ -69,6 +69,7 @@ auth.token = "{self.settings.frps_auth_token}"
 
 transport.heartbeatTimeout = 15
 maxPortsPerClient = {self.settings.max_tcp_ports_per_proxy}
+natholeAnalysisDataReserveHours = {self.settings.frps_nathole_analysis_data_reserve_hours}
 allowPorts = [
   {{ start = {start}, end = {end} }}
 ]

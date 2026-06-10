@@ -34,6 +34,9 @@ def _add_public_url(dto: dict[str, object]) -> dict[str, object]:
         else:
             dto["public_url"] = None
         dto["public_urls"] = [dto["public_url"]] if dto["public_url"] else []
+    elif dto.get("proxy_type") == ProxyType.XTCP.value:
+        dto["public_urls"] = []
+        dto["public_url"] = None
     else:
         public_urls = []
         mappings = dto.get("tcp_mappings")
@@ -75,6 +78,7 @@ class CreateProxyRequest(BaseModel):
     local_port: int | None = Field(default=None, ge=1, le=65535)
     subdomain: str | None = None
     tcp_ports: TcpPortsRequest | None = None
+    visitor_bind_port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class UserAuthRequest(BaseModel):
@@ -161,6 +165,7 @@ async def create_proxy(
     local_ip = _normalize_local_ip(body.local_ip)
     local_port = body.local_port or settings.default_local_port
     subdomain = _normalize_subdomain(body.subdomain) if body.proxy_type == ProxyType.HTTP else None
+    visitor_bind_port = body.visitor_bind_port or 9001
 
     async with store.lock:
         current = store.ensure_user_unlocked(user.uid)
@@ -194,6 +199,10 @@ async def create_proxy(
             ]
             remote_port = tcp_mappings[0].remote_port
             local_port = tcp_mappings[0].local_port
+        p2p_secret_key = new_token() if body.proxy_type == ProxyType.XTCP else None
+        p2p_fallback_name = (
+            f"{frps_name}__fallback" if body.proxy_type == ProxyType.XTCP else None
+        )
         proxy = Proxy(
             id=proxy_id,
             uid=current.uid,
@@ -206,12 +215,16 @@ async def create_proxy(
             local_port=local_port,
             subdomain=subdomain,
             tcp_mappings=tcp_mappings,
+            p2p_secret_key=p2p_secret_key,
+            p2p_fallback_name=p2p_fallback_name,
+            visitor_bind_port=visitor_bind_port,
             actual_local_port=local_port,
             speed_limit_kbps=body.speed_limit_kbps or settings.default_speed_limit_kbps,
             traffic_limit_mb=body.traffic_mb,
         )
         store.proxies[proxy.id] = proxy
-        current.balance_mb -= body.traffic_mb
+        if body.proxy_type != ProxyType.XTCP:
+            current.balance_mb -= body.traffic_mb
         dto = _add_public_url(store.proxy_to_dto(proxy))
         store.proxies[proxy.id] = proxy
         save_registered_users_unlocked(store)
@@ -245,9 +258,11 @@ async def get_proxy_scripts(proxy_id: int, user: User = Depends(require_user)) -
 
 
 def _proxy_scripts_response(proxy: Proxy, dto: dict[str, object]) -> dict[str, object]:
+    frpc_config = script_renderer.render_frpc_config(proxy, settings)
     return {
         "proxy": dto,
-        "frpc_config": script_renderer.render_frpc_config(proxy, settings),
+        "frpc_config": frpc_config,
+        "frpc_configs": script_renderer.render_frpc_configs(proxy, settings),
         "scripts": script_renderer.render_bundle(proxy, settings),
     }
 

@@ -31,6 +31,11 @@ async def show_online() -> dict[str, list[dict[str, object]]]:
                 ],
                 "public_url": _public_url(proxy),
                 "public_urls": _public_urls(proxy),
+                "visitor_endpoint": (
+                    f"{proxy.visitor_bind_addr}:{proxy.visitor_bind_port}"
+                    if proxy.proxy_type == ProxyType.XTCP
+                    else None
+                ),
             }
             for proxy in sorted(store.proxies.values(), key=lambda p: p.id)
             if proxy.status == ProxyStatus.ACTIVE and proxy.is_online
@@ -50,6 +55,8 @@ def _public_urls(proxy) -> list[str]:
         port = settings.frps_vhost_http_port
         port_part = "" if port == 80 else f":{port}"
         return [f"http://{proxy.subdomain}.{settings.effective_subdomain_host}{port_part}/"]
+    if proxy.proxy_type != ProxyType.TCP:
+        return []
     return [
         f"http://{settings.server_public_host}:{mapping.remote_port}/"
         for mapping in proxy.tcp_mappings

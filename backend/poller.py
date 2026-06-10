@@ -43,15 +43,9 @@ class UsagePoller:
                 continue
 
     async def poll_once(self) -> None:
-        try:
-            proxy_infos = await self.frps_client.list_tcp_proxies()
-        except Exception:
+        proxy_infos = await self._list_all_proxy_infos()
+        if proxy_infos is None:
             return
-        if hasattr(self.frps_client, "list_http_proxies"):
-            try:
-                proxy_infos = proxy_infos + await self.frps_client.list_http_proxies()
-            except Exception:
-                pass
         by_name = {
             str(info.get("name")): info
             for info in proxy_infos
@@ -66,12 +60,35 @@ class UsagePoller:
                     users_changed = (
                         _apply_tcp_poll_info(proxy, by_name, self.interval_sec) or users_changed
                     )
-                else:
+                elif proxy.proxy_type == ProxyType.HTTP:
                     info = by_name.get(proxy.frps_name)
                     users_changed = _apply_poll_info(proxy, info, self.interval_sec) or users_changed
+                else:
+                    users_changed = (
+                        _apply_p2p_poll_info(proxy, by_name, self.interval_sec) or users_changed
+                    )
                 _apply_stop_rules(proxy)
             if users_changed:
                 save_registered_users_unlocked(store)
+
+    async def _list_all_proxy_infos(self) -> list[dict[str, Any]] | None:
+        try:
+            proxy_infos = await self.frps_client.list_tcp_proxies()
+        except Exception:
+            return None
+        for method_name in (
+            "list_http_proxies",
+            "list_stcp_proxies",
+            "list_xtcp_proxies",
+        ):
+            method = getattr(self.frps_client, method_name, None)
+            if method is None:
+                continue
+            try:
+                proxy_infos = proxy_infos + await method()
+            except Exception:
+                continue
+        return proxy_infos
 
 
 def _apply_tcp_poll_info(
@@ -164,6 +181,27 @@ def _apply_poll_info(proxy: Proxy, info: dict[str, Any] | None, interval_sec: in
     return False
 
 
+def _apply_p2p_poll_info(
+    proxy: Proxy, by_name: dict[str, dict[str, Any]], interval_sec: int
+) -> bool:
+    xtcp_info = by_name.get(proxy.frps_name)
+    fallback_info = by_name.get(proxy.p2p_fallback_name or "")
+    proxy.p2p_xtcp_is_online = _is_online(xtcp_info)
+    proxy.p2p_fallback_is_online = _is_online(fallback_info)
+    proxy.is_online = proxy.p2p_xtcp_is_online or proxy.p2p_fallback_is_online
+    if proxy.is_online:
+        proxy.last_seen_at = datetime.now(UTC)
+
+    if fallback_info:
+        changed = _apply_poll_info(proxy, fallback_info, interval_sec)
+        proxy.is_online = proxy.p2p_xtcp_is_online or proxy.p2p_fallback_is_online
+        return changed
+
+    proxy.current_speed_bps = 0
+    proxy.last_frps_total_bytes = None
+    return False
+
+
 def _charge_usage(proxy: Proxy, delta: int) -> bool:
     proxy.traffic_used_bytes += delta
     user = store.users.get(proxy.uid)
@@ -194,3 +232,9 @@ def _as_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _is_online(info: dict[str, Any] | None) -> bool:
+    if not info:
+        return False
+    return str(info.get("status", "")) == "online"

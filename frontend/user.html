@@ -88,7 +88,7 @@
               <td class="font-medium" x-text="p.name"></td>
               <td>
                 <span class="status-badge"
-                      :class="p.proxy_type === 'http' ? 'badge-online' : 'badge-offline'"
+                      :class="proxyTypeBadge(p)"
                       x-text="proxyTypeLabel(p)"></span>
               </td>
               <td class="font-mono text-sm max-w-[260px] truncate">
@@ -142,6 +142,9 @@
           <button class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
                   :class="createType === 'http' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
                   @click="createType = 'http'; createError = ''">HTTP 服务</button>
+          <button class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                  :class="createType === 'xtcp' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                  @click="createType = 'xtcp'; createError = ''">P2P XTCP</button>
         </div>
 
         <div class="space-y-4" x-show="createType === 'tcp'">
@@ -246,6 +249,38 @@
             <input class="input" type="number" x-model.number="createForms.http.speed_limit_kbps" placeholder="1024">
           </div>
         </div>
+
+        <div class="space-y-4" x-show="createType === 'xtcp'">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">名称</label>
+            <input class="input" x-model="createForms.xtcp.name" placeholder="1-20 字符" maxlength="20">
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">电脑本地地址</label>
+              <input class="input" x-model.trim="createForms.xtcp.local_ip" placeholder="127.0.0.1">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">电脑本地端口</label>
+              <input class="input" type="number" x-model.number="createForms.xtcp.local_port" min="1" max="65535">
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">手机访问端监听端口</label>
+            <input class="input" type="number" x-model.number="createForms.xtcp.visitor_bind_port" min="1" max="65535">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">
+              fallback 中转限额 (MB)
+              <span class="text-gray-400 font-normal" x-text="'(余额 ' + balance_mb + ' MB)'"></span>
+            </label>
+            <input class="input" type="number" x-model.number="createForms.xtcp.traffic_mb" min="1" :max="balance_mb">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">fallback 限速 KB/s（可选，默认 1024）</label>
+            <input class="input" type="number" x-model.number="createForms.xtcp.speed_limit_kbps" placeholder="1024">
+          </div>
+        </div>
         <div x-show="createError" class="text-red-600 text-sm" x-text="createError"></div>
         <div class="flex justify-end gap-2">
           <button class="btn btn-secondary" @click="openCreateModal = false">取消</button>
@@ -266,19 +301,35 @@
             </template>
           </div>
         </div>
+        <div x-show="isP2P(createResult && createResult.proxy)" class="mb-4 border border-gray-200 rounded-md overflow-hidden">
+          <div class="bg-gray-50 px-3 py-2 text-sm font-medium text-gray-600">P2P 访问入口</div>
+          <div class="px-3 py-2 text-xs font-mono flex items-center justify-between gap-3">
+            <span>手机端</span>
+            <span class="text-gray-400">-&gt;</span>
+            <span x-text="(createResult && createResult.proxy && createResult.proxy.visitor_endpoint) || '127.0.0.1:9001'"></span>
+          </div>
+        </div>
         <div x-data="{ mt: 'config', st: 'linux' }">
           <div class="flex border-b border-gray-200 mb-3">
             <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
               :class="mt === 'config' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-              @click="mt = 'config'">配置文件</button>
+              @click="mt = 'config'">电脑配置</button>
+            <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+              x-show="hasVisitorScripts(createResult)"
+              :class="mt === 'visitor_config' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+              @click="mt = 'visitor_config'">手机配置</button>
             <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
               :class="mt === 'frpc' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-              @click="mt = 'frpc'">frpc 启动脚本</button>
+              @click="mt = 'frpc'">电脑脚本</button>
+            <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+              x-show="hasVisitorScripts(createResult)"
+              :class="mt === 'visitor' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+              @click="mt = 'visitor'">手机脚本</button>
             <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
               :class="mt === 'demo' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
               @click="mt = 'demo'">demo 启动脚本</button>
           </div>
-          <div x-show="mt !== 'config'" class="flex gap-1 mb-3">
+          <div x-show="mt !== 'config' && mt !== 'visitor_config'" class="flex gap-1 mb-3">
             <button class="px-3 py-1 text-xs rounded-full transition-colors"
               :class="st === 'linux' ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
               @click="st = 'linux'">Linux</button>
@@ -322,18 +373,34 @@
             </template>
           </div>
         </div>
+        <div x-show="isP2P(scriptData && scriptData.proxy)" class="mb-4 border border-gray-200 rounded-md overflow-hidden">
+          <div class="bg-gray-50 px-3 py-2 text-sm font-medium text-gray-600">P2P 访问入口</div>
+          <div class="px-3 py-2 text-xs font-mono flex items-center justify-between gap-3">
+            <span>手机端</span>
+            <span class="text-gray-400">-&gt;</span>
+            <span x-text="(scriptData && scriptData.proxy && scriptData.proxy.visitor_endpoint) || '127.0.0.1:9001'"></span>
+          </div>
+        </div>
         <div class="flex border-b border-gray-200 mb-3">
           <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
             :class="mt === 'config' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-            @click="mt = 'config'">配置文件</button>
+            @click="mt = 'config'">电脑配置</button>
+          <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+            x-show="hasVisitorScripts(scriptData)"
+            :class="mt === 'visitor_config' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            @click="mt = 'visitor_config'">手机配置</button>
           <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
             :class="mt === 'frpc' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
-            @click="mt = 'frpc'">frpc 启动脚本</button>
+            @click="mt = 'frpc'">电脑脚本</button>
+          <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+            x-show="hasVisitorScripts(scriptData)"
+            :class="mt === 'visitor' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            @click="mt = 'visitor'">手机脚本</button>
           <button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
             :class="mt === 'demo' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
             @click="mt = 'demo'">demo 启动脚本</button>
         </div>
-        <div x-show="mt !== 'config'" class="flex gap-1 mb-3">
+        <div x-show="mt !== 'config' && mt !== 'visitor_config'" class="flex gap-1 mb-3">
           <button class="px-3 py-1 text-xs rounded-full transition-colors"
             :class="st === 'linux' ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
             @click="st = 'linux'">Linux</button>
@@ -390,7 +457,8 @@
             remote_end_port: null,
             range_local_start_port: 9527
           },
-          http: { name: '', traffic_mb: 0, speed_limit_kbps: 1024, local_ip: '127.0.0.1', local_port: 9527, subdomain: '' }
+          http: { name: '', traffic_mb: 0, speed_limit_kbps: 1024, local_ip: '127.0.0.1', local_port: 9527, subdomain: '' },
+          xtcp: { name: '', traffic_mb: 0, speed_limit_kbps: 1024, local_ip: '127.0.0.1', local_port: 9527, visitor_bind_port: 9001 }
         },
         createError: '',
         creating: false,
@@ -533,11 +601,16 @@
             const tcpPorts = this.buildTcpPortsPayload(form);
             if (!tcpPorts) return;
             payload.tcp_ports = tcpPorts;
-          } else {
+          } else if (payload.proxy_type === 'http') {
             payload.local_port = form.local_port;
             payload.subdomain = form.subdomain;
             if (!payload.local_port || payload.local_port < 1 || payload.local_port > 65535) { this.createError = '请输入有效本地端口'; return; }
             if (!payload.subdomain.trim()) { this.createError = '请输入子域名前缀'; return; }
+          } else {
+            payload.local_port = form.local_port;
+            payload.visitor_bind_port = form.visitor_bind_port;
+            if (!this.validatePort(payload.local_port, '电脑本地端口')) return;
+            if (!this.validatePort(payload.visitor_bind_port, '手机访问端监听端口')) return;
           }
           this.creating = true;
           try {
@@ -551,7 +624,7 @@
             const data = await res.json();
             if (!res.ok) { this.createError = extractDetail(data) || '创建失败'; return; }
             this.createResult = data;
-            this.balance_mb -= payload.traffic_mb;
+            if (payload.proxy_type !== 'xtcp') this.balance_mb -= payload.traffic_mb;
             this.setCreateTraffic(this.balance_mb);
             toast('连接创建成功');
           } finally {
@@ -583,10 +656,19 @@
         setCreateTraffic(value) {
           this.createForms.tcp.traffic_mb = value;
           this.createForms.http.traffic_mb = value;
+          this.createForms.xtcp.traffic_mb = value;
         },
 
         proxyTypeLabel(p) {
-          return p.proxy_type === 'http' ? 'HTTP' : 'TCP';
+          if (p.proxy_type === 'http') return 'HTTP';
+          if (p.proxy_type === 'xtcp') return 'P2P';
+          return 'TCP';
+        },
+
+        proxyTypeBadge(p) {
+          if (p.proxy_type === 'http') return 'badge-online';
+          if (p.proxy_type === 'xtcp') return 'badge-disabled';
+          return 'badge-offline';
         },
 
         publicEntry(p) {
@@ -598,12 +680,14 @@
             }
             if (p.frps_remote_port != null) return String(p.frps_remote_port);
           }
+          if (p.proxy_type === 'xtcp') return p.visitor_endpoint || '127.0.0.1:9001';
           if (p.public_url) return p.public_url.replace(/^https?:\/\//, '').replace(/\/$/, '');
           return '-';
         },
 
         localEndpoint(p) {
           var ip = p.local_ip || '127.0.0.1';
+          if (p.proxy_type === 'xtcp') return ip + ':' + p.local_port;
           if (p.proxy_type === 'tcp') {
             var mappings = this.tcpMappings(p);
             if (mappings.length) return ip + ':' + this.localPortSummary(mappings);
@@ -695,6 +779,14 @@
           return [];
         },
 
+        isP2P(p) {
+          return !!p && p.proxy_type === 'xtcp';
+        },
+
+        hasVisitorScripts(data) {
+          return !!(data && data.proxy && data.proxy.proxy_type === 'xtcp' && data.scripts && data.scripts.visitor);
+        },
+
         remotePortSummary(p) {
           var mappings = this.tcpMappings(p);
           return this.portSummary(mappings.map(function (m) { return m.remote_port; }));
@@ -718,6 +810,7 @@
 
         mappingDetails(p) {
           var ip = (p && p.local_ip) || '127.0.0.1';
+          if (p && p.proxy_type === 'xtcp') return '手机端 ' + (p.visitor_endpoint || '127.0.0.1:9001') + '\n电脑端 ' + ip + ':' + p.local_port;
           return this.tcpMappings(p).map(function (m) {
             return m.remote_port + ' -> ' + ip + ':' + m.local_port;
           }).join('\n');
@@ -733,10 +826,15 @@
 
     function getScriptContent(data, mainTab, subTab) {
       if (!data) return '';
-      if (mainTab === 'config') return data.frpc_config || '';
+      if (mainTab === 'config') return (data.frpc_configs && data.frpc_configs.server) || data.frpc_config || '';
+      if (mainTab === 'visitor_config') return (data.frpc_configs && data.frpc_configs.visitor) || '';
       if (mainTab === 'frpc') {
         var s = data.scripts && data.scripts.frpc;
         return s ? (s[subTab] || '') : '';
+      }
+      if (mainTab === 'visitor') {
+        var sv = data.scripts && data.scripts.visitor;
+        return sv ? (sv[subTab] || '') : '';
       }
       if (mainTab === 'demo') {
         var s2 = data.scripts && data.scripts.demo;
@@ -746,7 +844,9 @@
     }
 
     function getScriptFilename(mainTab, subTab) {
-      if (mainTab === 'config') return 'frpc.toml';
+      if (mainTab === 'config') return 'frpc-server.toml';
+      if (mainTab === 'visitor_config') return 'frpc-visitor.toml';
+      if (mainTab === 'visitor') return 'frpc-visitor' + (subTab === 'windows' ? '.ps1' : '.sh');
       return mainTab + (subTab === 'windows' ? '.ps1' : '.sh');
     }
 

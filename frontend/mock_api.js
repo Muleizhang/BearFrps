@@ -182,6 +182,13 @@
       p.public_url = p.subdomain ? "http://" + p.subdomain + "." + window.MOCK_SUBDOMAIN_HOST + ":8080/" : null;
       p.public_urls = p.public_url ? [p.public_url] : [];
       p.tcp_mappings = [];
+    } else if (p.proxy_type === "xtcp") {
+      p.public_url = null;
+      p.public_urls = [];
+      p.tcp_mappings = [];
+      p.visitor_bind_addr = p.visitor_bind_addr || "127.0.0.1";
+      p.visitor_bind_port = p.visitor_bind_port || 9001;
+      p.visitor_endpoint = p.visitor_bind_addr + ":" + p.visitor_bind_port;
     } else {
       p.tcp_mappings = tcpMappings(p);
       if (p.tcp_mappings.length) {
@@ -215,6 +222,25 @@
       lines.push('localIP = "' + proxy.local_ip + '"');
       lines.push('localPort = ' + proxy.local_port);
       lines.push('subdomain = "' + proxy.subdomain + '"');
+    } else if (proxy.proxy_type === "xtcp") {
+      var secret = proxy.p2p_secret_key || proxy.token;
+      var fallbackName = proxy.p2p_fallback_name || ((proxy.frps_name || proxy.name) + "__fallback");
+      [
+        { name: proxy.frps_name || proxy.name, type: "xtcp" },
+        { name: fallbackName, type: "stcp" }
+      ].forEach(function (item) {
+        lines.push('[[proxies]]');
+        lines.push('name = "' + item.name + '"');
+        lines.push('type = "' + item.type + '"');
+        lines.push('secretKey = "' + secret + '"');
+        lines.push('localIP = "' + proxy.local_ip + '"');
+        lines.push('localPort = ' + proxy.local_port);
+        lines.push('allowUsers = ["*"]');
+        lines.push('transport.bandwidthLimit = "' + (proxy.speed_limit_kbps || 1024) + 'KB"');
+        lines.push('transport.bandwidthLimitMode = "server"');
+        lines.push('');
+      });
+      return lines.join("\n");
     } else {
       tcpMappings(proxy).forEach(function (m) {
         lines.push('[[proxies]]');
@@ -235,18 +261,70 @@
     return lines.join("\n");
   }
 
+  function makeVisitorConfig(proxy) {
+    proxy = withPublicUrl(proxy);
+    if (proxy.proxy_type !== "xtcp") return makeFrpcConfig(proxy);
+    var secret = proxy.p2p_secret_key || proxy.token;
+    var fallbackName = proxy.p2p_fallback_name || ((proxy.frps_name || proxy.name) + "__fallback");
+    var visitorName = (proxy.frps_name || proxy.name) + "__visitor";
+    var fallbackVisitorName = fallbackName + "__visitor";
+    return [
+      'serverAddr = "' + window.MOCK_SERVER_HOST + '"',
+      'serverPort = 7000',
+      '',
+      'auth.method = "token"',
+      'auth.token = "bearfrps-internal"',
+      'metadatas.token = "' + proxy.token + '"',
+      '',
+      '[[visitors]]',
+      'name = "' + visitorName + '"',
+      'type = "xtcp"',
+      'serverName = "' + (proxy.frps_name || proxy.name) + '"',
+      'secretKey = "' + secret + '"',
+      'bindAddr = "' + (proxy.visitor_bind_addr || "127.0.0.1") + '"',
+      'bindPort = ' + (proxy.visitor_bind_port || 9001),
+      'keepTunnelOpen = true',
+      'maxRetriesAnHour = 8',
+      'minRetryInterval = 90',
+      'fallbackTo = "' + fallbackVisitorName + '"',
+      'fallbackTimeoutMs = ' + (proxy.fallback_timeout_ms || 1000),
+      '',
+      '[[visitors]]',
+      'name = "' + fallbackVisitorName + '"',
+      'type = "stcp"',
+      'serverName = "' + fallbackName + '"',
+      'secretKey = "' + secret + '"',
+      'bindAddr = "' + (proxy.visitor_bind_addr || "127.0.0.1") + '"',
+      'bindPort = -1',
+      ''
+    ].join("\n");
+  }
+
+  function makeFrpcConfigs(proxy) {
+    var configs = { server: makeFrpcConfig(proxy) };
+    if ((proxy.proxy_type || "tcp") === "xtcp") configs.visitor = makeVisitorConfig(proxy);
+    return configs;
+  }
+
   function makeScripts(proxy) {
     var cfg = makeFrpcConfig(proxy);
+    var visitorCfg = makeVisitorConfig(proxy);
     var version = "v0.58.1";
     var versionNoV = "0.58.1";
     var host = window.MOCK_SERVER_HOST;
     var binBase = "http://" + host + ":8000/static/demo-server-bin";
 
-    var frpcLinux = "#!/bin/bash\nset -e\n\nARCH=$(uname -m)\ncase $ARCH in\n  x86_64) ARCH=amd64;;\n  aarch64|arm64) ARCH=arm64;;\nesac\n\nif [ ! -f frpc ]; then\n  curl -L -o frp.tar.gz \"https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + versionNoV + "_linux_${ARCH}.tar.gz\"\n  tar xzf frp.tar.gz --strip-components=1 --wildcards \"*/frpc\"\n  chmod +x frpc\nfi\n\ncat > frpc.toml <<'EOF'\n" + cfg + "EOF\n\n./frpc -c frpc.toml\n";
+    function unixScript(os, config) {
+      return "#!/bin/bash\nset -e\n\nARCH=$(uname -m)\ncase $ARCH in\n  x86_64) ARCH=amd64;;\n  aarch64|arm64) ARCH=arm64;;\nesac\n\nif [ ! -f frpc ]; then\n  curl -L -o frp.tar.gz \"https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + versionNoV + "_" + os + "_${ARCH}.tar.gz\"\n  tar xzf frp.tar.gz --strip-components=1 --wildcards \"*/frpc\"\n  chmod +x frpc\nfi\n\ncat > frpc.toml <<'EOF'\n" + config + "EOF\n\n./frpc -c frpc.toml\n";
+    }
 
-    var frpcMac = "#!/bin/bash\nset -e\n\nARCH=$(uname -m)\ncase $ARCH in\n  x86_64) ARCH=amd64;;\n  aarch64|arm64) ARCH=arm64;;\nesac\n\nif [ ! -f frpc ]; then\n  curl -L -o frp.tar.gz \"https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + versionNoV + "_darwin_${ARCH}.tar.gz\"\n  tar xzf frp.tar.gz --strip-components=1 --wildcards \"*/frpc\"\n  chmod +x frpc\nfi\n\ncat > frpc.toml <<'EOF'\n" + cfg + "EOF\n\n./frpc -c frpc.toml\n";
+    function winScript(config) {
+      return "if (-not (Test-Path frpc.exe)) {\n  Invoke-WebRequest -Uri 'https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + versionNoV + "_windows_amd64.zip' -OutFile frp.zip\n  Expand-Archive frp.zip -DestinationPath .\n  Move-Item frp_*\\frpc.exe .\n  Remove-Item frp_* -Recurse\n}\n\n$cfg = @\"\n" + config + "\"@\nSet-Content frpc.toml $cfg\n\n.\\frpc.exe -c frpc.toml\n";
+    }
 
-    var frpcWin = "if (-not (Test-Path frpc.exe)) {\n  Invoke-WebRequest -Uri 'https://github.com/fatedier/frp/releases/download/" + version + "/frp_" + versionNoV + "_windows_amd64.zip' -OutFile frp.zip\n  Expand-Archive frp.zip -DestinationPath .\n  Move-Item frp_*\\frpc.exe .\n  Remove-Item frp_* -Recurse\n}\n\n$cfg = @\"\n" + cfg + "\"@\nSet-Content frpc.toml $cfg\n\n.\\frpc.exe -c frpc.toml\n";
+    var frpcLinux = unixScript("linux", cfg);
+    var frpcMac = unixScript("darwin", cfg);
+    var frpcWin = winScript(cfg);
 
     var demoServerPy = "import http.server, json, time, argparse, os, math\n\nclass Handler(http.server.BaseHTTPRequestHandler):\n    msgs = []\n    COLORS = ['#d1fae5','#dbeafe','#fce7f3','#fef3c7','#ede9fe','#ccfbf1','#fef9c3','#e0e7ff']\n    bg = COLORS[int(time.time()) % len(COLORS)]\n\n    def do_GET(self):\n        if self.path == '/api/messages':\n            self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers()\n            self.wfile.write(json.dumps(self.msgs).encode())\n        else:\n            html = '<html><head><meta charset=utf-8><style>body{background:'+self.bg+';font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px}input,textarea{width:100%;padding:8px;margin:4px 0;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}button{padding:8px 16px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer}.msg{padding:8px;border-bottom:1px solid #e5e7eb}</style></head><body>'\n            html += '<h2>Message Board</h2>'\n            html += '<form onsubmit=\"postMsg();return false\"><input id=nick placeholder=Nickname><textarea id=content placeholder=Message rows=2></textarea><button type=submit>Send</button></form>'\n            html += '<div id=list></div>'\n            html += '<script>function load(){fetch(\"/api/messages\").then(r=>r.json()).then(d=>{document.getElementById(\"list\").innerHTML=d.map(m=>\"<div class=msg><b>\"+m.nickname+\"</b> \"+m.content+\"</div>\").join(\"\")})}function postMsg(){fetch(\"/api/messages\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify({nickname:document.getElementById(\"nick\").value,content:document.getElementById(\"content\").value})}).then(load)}setInterval(load,3000);load()</script>'\n            html += '</body></html>'\n            self.send_response(200); self.send_header('Content-Type','text/html'); self.end_headers()\n            self.wfile.write(html.encode())\n\n    def do_POST(self):\n        if self.path == '/api/messages':\n            length = int(self.headers.get('Content-Length',0))\n            data = json.loads(self.rfile.read(length))\n            data['timestamp'] = time.time()\n            self.msgs.append(data)\n            self.send_response(200); self.send_header('Content-Type','application/json'); self.end_headers()\n            self.wfile.write(json.dumps({'ok':True}).encode())\n\nif __name__ == '__main__':\n    p = argparse.ArgumentParser()\n    p.add_argument('--port', type=int, default=527)\n    a = p.parse_args()\n    print(f'Serving on port {a.port}...')\n    http.server.HTTPServer(('0.0.0.0', a.port), Handler).serve_forever()\n";
 
@@ -256,10 +334,18 @@
 
     var demoWin = "$PORT = Read-Host 'Local port [default 527]'\nif (-not $PORT) { $PORT = 527 }\n\n$script = @'\n" + demoServerPy + "'@\nSet-Content demo_server.py $script\n\ntry { python demo_server.py --port $PORT }\ncatch {\n  Write-Host 'Python not found, downloading binary...'\n  Invoke-WebRequest -Uri '" + binBase + "/demo-server-windows-amd64.exe' -OutFile demo-server.exe\n  .\\demo-server.exe --port $PORT\n}\n";
 
-    return {
+    var scripts = {
       frpc: { linux: frpcLinux, mac: frpcMac, windows: frpcWin },
       demo: { linux: demoLinux, mac: demoMac, windows: demoWin }
     };
+    if ((proxy.proxy_type || "tcp") === "xtcp") {
+      scripts.visitor = {
+        linux: unixScript("linux", visitorCfg),
+        mac: unixScript("darwin", visitorCfg),
+        windows: winScript(visitorCfg)
+      };
+    }
+    return scripts;
   }
 
   function randomTraffic() {
@@ -287,6 +373,12 @@
             p.local_port = p.tcp_mappings[0].local_port;
             p.actual_local_port = p.tcp_mappings[0].actual_local_port;
           }
+        } else if ((p.proxy_type || "tcp") === "xtcp") {
+          p.p2p_xtcp_is_online = Math.random() > 0.3;
+          p.p2p_fallback_is_online = Math.random() > 0.85;
+          p.is_online = p.p2p_xtcp_is_online || p.p2p_fallback_is_online;
+          p.current_speed_bps = p.p2p_fallback_is_online ? Math.floor(Math.random() * 500000) : 0;
+          p.actual_local_port = p.local_port || 527;
         } else {
           p.is_online = Math.random() > 0.3;
           if (p.is_online) {
@@ -296,7 +388,7 @@
             p.current_speed_bps = 0;
           }
         }
-        if (p.is_online) {
+        if (p.is_online && ((p.proxy_type || "tcp") !== "xtcp" || p.p2p_fallback_is_online)) {
           p.traffic_used_bytes = Math.min(p.traffic_used_bytes + Math.floor(Math.random() * 100000), p.traffic_limit_mb * 1024 * 1024);
           p.last_seen_at = new Date().toISOString();
         }
@@ -428,6 +520,7 @@
       var name = String(body.name || "").trim();
       var localIp = String(body.local_ip || "127.0.0.1").trim();
       var localPort = Number(body.local_port || 9527);
+      var visitorBindPort = Number(body.visitor_bind_port || 9001);
       var subdomain = String(body.subdomain || "").trim().toLowerCase();
 
       if (mine.length >= 3) return { status: 400, body: { detail: "超过最大连接数" } };
@@ -446,6 +539,9 @@
         if (proxies.some(function (p) { return p.status !== "deleted" && (p.proxy_type || "tcp") === "http" && p.subdomain === subdomain; })) {
           return { status: 400, body: { detail: "子域名已被占用" } };
         }
+      } else if (proxyType === "xtcp") {
+        if (!localPort || localPort < 1 || localPort > 65535) return { status: 400, body: { detail: "请输入有效本地端口" } };
+        if (!visitorBindPort || visitorBindPort < 1 || visitorBindPort > 65535) return { status: 400, body: { detail: "请输入有效访问端监听端口" } };
       } else {
         proxyType = "tcp";
         tcpPlan = buildTcpPortPlan(body, localPort);
@@ -454,7 +550,7 @@
         localPort = tcpPlan.local_ports[0];
       }
 
-      user.balance_mb -= body.traffic_mb;
+      if (proxyType !== "xtcp") user.balance_mb -= body.traffic_mb;
       users[user.uid] = user;
       saveUsers(users);
 
@@ -483,6 +579,14 @@
         local_port: localPort,
         subdomain: proxyType === "http" ? subdomain : null,
         tcp_mappings: mappings,
+        p2p_secret_key: proxyType === "xtcp" ? makeToken() : null,
+        p2p_fallback_name: proxyType === "xtcp" ? frpsName + "__fallback" : null,
+        visitor_bind_addr: "127.0.0.1",
+        visitor_bind_port: proxyType === "xtcp" ? visitorBindPort : 9001,
+        keep_tunnel_open: true,
+        fallback_timeout_ms: 1000,
+        p2p_xtcp_is_online: false,
+        p2p_fallback_is_online: false,
         status: "active",
         is_online: false,
         actual_local_port: localPort,
@@ -503,6 +607,7 @@
         body: {
           proxy: proxy,
           frpc_config: makeFrpcConfig(proxy),
+          frpc_configs: makeFrpcConfigs(proxy),
           scripts: makeScripts(proxy)
         }
       };
@@ -533,6 +638,7 @@
         body: {
           proxy: proxy,
           frpc_config: makeFrpcConfig(proxy),
+          frpc_configs: makeFrpcConfigs(proxy),
           scripts: makeScripts(proxy)
         }
       };
@@ -660,7 +766,8 @@
           remote_ports: tcpMappings(p).map(function (m) { return m.remote_port; }),
           tcp_mappings: p.tcp_mappings || [],
           public_url: p.public_url,
-          public_urls: p.public_urls || []
+          public_urls: p.public_urls || [],
+          visitor_endpoint: p.visitor_endpoint || null
         };
       });
       return { status: 200, body: { proxies: result } };

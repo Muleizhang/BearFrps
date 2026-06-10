@@ -282,6 +282,53 @@ def test_create_http_proxy_and_scripts():
         assert duplicate.status_code == 400
 
 
+def test_create_xtcp_proxy_and_visitor_scripts():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+        before_balance = client.get("/api/user/me").json()["balance_mb"]
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "xtcp",
+                "name": "phone",
+                "traffic_mb": 10,
+                "speed_limit_kbps": 256,
+                "local_ip": "127.0.0.1",
+                "local_port": 8123,
+                "visitor_bind_port": 9001,
+            },
+        )
+        assert created.status_code == 200
+        body = created.json()
+        proxy = body["proxy"]
+        assert proxy["proxy_type"] == "xtcp"
+        assert proxy["frps_remote_port"] is None
+        assert proxy["tcp_mappings"] == []
+        assert proxy["public_url"] is None
+        assert proxy["public_urls"] == []
+        assert proxy["visitor_endpoint"] == "127.0.0.1:9001"
+        assert proxy["p2p_fallback_name"] == f"{proxy['frps_name']}__fallback"
+        assert client.get("/api/user/me").json()["balance_mb"] == before_balance
+
+        server_config = body["frpc_configs"]["server"]
+        visitor_config = body["frpc_configs"]["visitor"]
+        assert body["frpc_config"] == server_config
+        assert 'type = "xtcp"' in server_config
+        assert 'type = "stcp"' in server_config
+        assert "remotePort" not in server_config
+        assert "localPort = 8123" in server_config
+        assert '[[visitors]]' in visitor_config
+        assert 'type = "xtcp"' in visitor_config
+        assert 'type = "stcp"' in visitor_config
+        assert 'fallbackTo = "' in visitor_config
+        assert "keepTunnelOpen = true" in visitor_config
+        assert "bindPort = 9001" in visitor_config
+        assert "bindPort = -1" in visitor_config
+        assert body["scripts"]["visitor"]["linux"]
+
+
 def test_user_auth_login_logout_and_persistence():
     with TestClient(app) as client:
         registered = register_user(client, username="persisted")

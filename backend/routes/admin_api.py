@@ -99,7 +99,7 @@ async def list_admin_proxies() -> dict[str, list[dict[str, object]]]:
                 else None
             )
             p["public_urls"] = [p["public_url"]] if p["public_url"] else []
-        else:
+        elif p.get("proxy_type") == ProxyType.TCP.value:
             public_urls = [
                 f"http://{host}:{mapping['remote_port']}/"
                 for mapping in p.get("tcp_mappings", [])
@@ -109,6 +109,9 @@ async def list_admin_proxies() -> dict[str, list[dict[str, object]]]:
                 public_urls.append(f"http://{host}:{p['frps_remote_port']}/")
             p["public_urls"] = public_urls
             p["public_url"] = public_urls[0] if public_urls else None
+        else:
+            p["public_urls"] = []
+            p["public_url"] = None
     return {"proxies": proxies}
 
 

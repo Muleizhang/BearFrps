@@ -33,29 +33,36 @@ class ScriptRenderer:
     def render_bundle(self, proxy: Proxy, settings: Settings) -> dict[str, dict[str, str]]:
         if not self.templates:
             self.load()
-        return {
+        server_config = self.render_frpc_config(proxy, settings)
+        bundle = {
             "frpc": {
-                "linux": self._render(("frpc", "linux"), proxy, settings),
-                "mac": self._render(("frpc", "mac"), proxy, settings),
-                "windows": self._render(("frpc", "windows"), proxy, settings),
+                "linux": self._render(("frpc", "linux"), proxy, settings, server_config),
+                "mac": self._render(("frpc", "mac"), proxy, settings, server_config),
+                "windows": self._render(("frpc", "windows"), proxy, settings, server_config),
             },
             "demo": {
-                "linux": self._render(("demo", "linux"), proxy, settings),
-                "mac": self._render(("demo", "mac"), proxy, settings),
-                "windows": self._render(("demo", "windows"), proxy, settings),
+                "linux": self._render(("demo", "linux"), proxy, settings, server_config),
+                "mac": self._render(("demo", "mac"), proxy, settings, server_config),
+                "windows": self._render(("demo", "windows"), proxy, settings, server_config),
             },
         }
+        if proxy.proxy_type == ProxyType.XTCP:
+            visitor_config = self.render_frpc_visitor_config(proxy, settings)
+            bundle["visitor"] = {
+                "linux": self._render(("frpc", "linux"), proxy, settings, visitor_config),
+                "mac": self._render(("frpc", "mac"), proxy, settings, visitor_config),
+                "windows": self._render(("frpc", "windows"), proxy, settings, visitor_config),
+            }
+        return bundle
+
+    def render_frpc_configs(self, proxy: Proxy, settings: Settings) -> dict[str, str]:
+        configs = {"server": self.render_frpc_config(proxy, settings)}
+        if proxy.proxy_type == ProxyType.XTCP:
+            configs["visitor"] = self.render_frpc_visitor_config(proxy, settings)
+        return configs
 
     def render_frpc_config(self, proxy: Proxy, settings: Settings) -> str:
-        lines = [
-            f'serverAddr = "{_toml_str(settings.server_public_host)}"\n'
-            f"serverPort = {settings.frps_bind_port}",
-            "",
-            'auth.method = "token"\n'
-            f'auth.token = "{_toml_str(settings.frps_auth_token)}"\n'
-            f'metadatas.token = "{_toml_str(proxy.token)}"',
-            "",
-        ]
+        lines = self._common_frpc_lines(proxy, settings)
         if proxy.proxy_type == ProxyType.TCP:
             for mapping in proxy.tcp_mappings:
                 lines.extend(
@@ -66,6 +73,27 @@ class ScriptRenderer:
                         f'localIP = "{_toml_str(proxy.local_ip)}"',
                         f"localPort = {mapping.local_port}",
                         f"remotePort = {mapping.remote_port}",
+                        f'transport.bandwidthLimit = "{proxy.speed_limit_kbps}KB"',
+                        'transport.bandwidthLimitMode = "server"',
+                        "",
+                    ]
+                )
+        elif proxy.proxy_type == ProxyType.XTCP:
+            secret_key = proxy.p2p_secret_key or proxy.token
+            fallback_name = proxy.p2p_fallback_name or f"{proxy.frps_name}__fallback"
+            for name, proxy_type in (
+                (proxy.frps_name, "xtcp"),
+                (fallback_name, "stcp"),
+            ):
+                lines.extend(
+                    [
+                        "[[proxies]]",
+                        f'name = "{_toml_str(name)}"',
+                        f'type = "{proxy_type}"',
+                        f'secretKey = "{_toml_str(secret_key)}"',
+                        f'localIP = "{_toml_str(proxy.local_ip)}"',
+                        f"localPort = {proxy.local_port}",
+                        'allowUsers = ["*"]',
                         f'transport.bandwidthLimit = "{proxy.speed_limit_kbps}KB"',
                         'transport.bandwidthLimitMode = "server"',
                         "",
@@ -87,7 +115,59 @@ class ScriptRenderer:
             )
         return "\n".join(lines)
 
-    def _render(self, key: tuple[str, str], proxy: Proxy, settings: Settings) -> str:
+    def render_frpc_visitor_config(self, proxy: Proxy, settings: Settings) -> str:
+        if proxy.proxy_type != ProxyType.XTCP:
+            return self.render_frpc_config(proxy, settings)
+        secret_key = proxy.p2p_secret_key or proxy.token
+        fallback_name = proxy.p2p_fallback_name or f"{proxy.frps_name}__fallback"
+        xtcp_visitor_name = f"{proxy.frps_name}__visitor"
+        stcp_visitor_name = f"{fallback_name}__visitor"
+        lines = self._common_frpc_lines(proxy, settings)
+        lines.extend(
+            [
+                "[[visitors]]",
+                f'name = "{_toml_str(xtcp_visitor_name)}"',
+                'type = "xtcp"',
+                f'serverName = "{_toml_str(proxy.frps_name)}"',
+                f'secretKey = "{_toml_str(secret_key)}"',
+                f'bindAddr = "{_toml_str(proxy.visitor_bind_addr)}"',
+                f"bindPort = {proxy.visitor_bind_port}",
+                f"keepTunnelOpen = {_toml_bool(proxy.keep_tunnel_open)}",
+                "maxRetriesAnHour = 8",
+                "minRetryInterval = 90",
+                f'fallbackTo = "{_toml_str(stcp_visitor_name)}"',
+                f"fallbackTimeoutMs = {proxy.fallback_timeout_ms}",
+                "",
+                "[[visitors]]",
+                f'name = "{_toml_str(stcp_visitor_name)}"',
+                'type = "stcp"',
+                f'serverName = "{_toml_str(fallback_name)}"',
+                f'secretKey = "{_toml_str(secret_key)}"',
+                f'bindAddr = "{_toml_str(proxy.visitor_bind_addr)}"',
+                "bindPort = -1",
+                "",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _common_frpc_lines(self, proxy: Proxy, settings: Settings) -> list[str]:
+        return [
+            f'serverAddr = "{_toml_str(settings.server_public_host)}"\n'
+            f"serverPort = {settings.frps_bind_port}",
+            "",
+            'auth.method = "token"\n'
+            f'auth.token = "{_toml_str(settings.frps_auth_token)}"\n'
+            f'metadatas.token = "{_toml_str(proxy.token)}"',
+            "",
+        ]
+
+    def _render(
+        self,
+        key: tuple[str, str],
+        proxy: Proxy,
+        settings: Settings,
+        frpc_config: str,
+    ) -> str:
         text = self.templates[key]
         replacements = {
             "{{SERVER_HOST}}": settings.server_public_host,
@@ -101,7 +181,7 @@ class ScriptRenderer:
             "{{DEFAULT_LOCAL_PORT}}": str(proxy.local_port),
             "{{DEFAULT_SPEED_LIMIT_KBPS}}": str(proxy.speed_limit_kbps),
             "{{DEMO_BIN_BASE_URL}}": settings.demo_bin_base_url,
-            "{{FRPC_CONFIG}}": self.render_frpc_config(proxy, settings).rstrip(),
+            "{{FRPC_CONFIG}}": frpc_config.rstrip(),
             "{{LOCAL_PORT}}": str(proxy.local_port),
         }
         for placeholder, value in replacements.items():
@@ -128,6 +208,10 @@ class ScriptRenderer:
 
 def _toml_str(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _toml_bool(value: bool) -> str:
+    return "true" if value else "false"
 
 
 FRPC_UNIX_FALLBACK = r"""#!/bin/bash

@@ -36,7 +36,7 @@
             <span class="font-medium text-sm truncate" x-text="p.name"></span>
             <span class="text-xs text-gray-500 font-mono" x-text="entryLabel(p)" :title="mappingDetails(p)"></span>
           </div>
-          <div class="bg-white">
+          <div class="bg-white" x-show="p.public_url">
             <iframe :src="p.public_url"
                     class="w-full border-0"
                     style="height:300px"
@@ -44,11 +44,21 @@
                     sandbox="allow-scripts allow-same-origin allow-forms"
                     :title="p.name"></iframe>
           </div>
+          <div class="bg-white flex items-center justify-center text-center p-6"
+               style="height:300px"
+               x-show="!p.public_url">
+            <div>
+              <div class="text-xs text-gray-400 mb-2">P2P 访问端</div>
+              <div class="font-mono text-sm text-gray-700" x-text="p.visitor_endpoint || '127.0.0.1:9001'"></div>
+            </div>
+          </div>
           <div class="px-3 py-2 border-t border-green-200 bg-green-50 text-right">
             <a :href="p.public_url" target="_blank" rel="noopener"
-               class="text-xs text-blue-600 hover:text-blue-800 transition-colors">
+               class="text-xs text-blue-600 hover:text-blue-800 transition-colors"
+               x-show="p.public_url">
               在新窗口打开 &#8599;
             </a>
+            <span class="text-xs text-gray-500" x-show="!p.public_url">P2P</span>
           </div>
         </div>
       </template>
@@ -105,6 +115,7 @@
         },
 
         entryLabel(p) {
+          if (p.proxy_type === 'xtcp') return 'P2P';
           if (p.proxy_type !== 'tcp') return 'HTTP';
           var ports = this.tcpMappings(p).map(function (m) { return Number(m.remote_port); }).filter(function (n) { return n >= 1; });
           if (!ports.length) return '-';
@@ -116,6 +127,7 @@
         },
 
         mappingDetails(p) {
+          if (p && p.proxy_type === 'xtcp') return p.visitor_endpoint || '127.0.0.1:9001';
           return this.tcpMappings(p).map(function (m) {
             return m.remote_port + ' -> ' + (m.local_port || '-');
           }).join('\n');

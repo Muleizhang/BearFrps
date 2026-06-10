@@ -13,6 +13,7 @@ auth.token = "bearfrps-internal"
 
 transport.heartbeatTimeout = 15
 maxPortsPerClient = 10
+natholeAnalysisDataReserveHours = 168
 allowPorts = [
   { start = 1, end = 65535 }
 ]

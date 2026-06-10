@@ -23,6 +23,7 @@ class Settings(BaseModel):
     frps_auth_token: str = "bearfrps-internal"
     frps_vhost_http_port: int = 8080
     frps_subdomain_host: str = ""
+    frps_nathole_analysis_data_reserve_hours: int = 168
 
     plugin_path: str = "/frps-plugin"
     remote_port_range_start: int = 1
@@ -75,6 +76,10 @@ def get_settings() -> Settings:
         ),
         frps_subdomain_host=_env_str(
             "FRPS_SUBDOMAIN_HOST", defaults.frps_subdomain_host
+        ),
+        frps_nathole_analysis_data_reserve_hours=_env_int(
+            "FRPS_NATHOLE_ANALYSIS_DATA_RESERVE_HOURS",
+            defaults.frps_nathole_analysis_data_reserve_hours,
         ),
         plugin_path=_env_str("PLUGIN_PATH", defaults.plugin_path),
         remote_port_range_start=_env_int(

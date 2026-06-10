@@ -54,20 +54,33 @@ async def _handle_new_proxy(content: dict[str, Any]) -> dict[str, Any]:
         if reason:
             return _reject(reason)
         assert proxy is not None
-        if proxy_type and proxy_type != proxy.proxy_type.value:
-            return _reject("proxy type mismatch")
         if proxy.proxy_type == ProxyType.TCP:
+            if proxy_type and proxy_type != proxy.proxy_type.value:
+                return _reject("proxy type mismatch")
             mapping = _find_tcp_mapping(proxy, proxy_name)
             if mapping is None:
                 return _reject("proxy name mismatch")
             if remote_port != mapping.remote_port:
                 return _reject("remote port mismatch")
             mapping.is_online = True
-        else:
+        elif proxy.proxy_type == ProxyType.HTTP:
+            if proxy_type and proxy_type != proxy.proxy_type.value:
+                return _reject("proxy type mismatch")
             if proxy_name != proxy.frps_name:
                 return _reject("proxy name mismatch")
             if _extract_subdomain(content) != proxy.subdomain:
                 return _reject("subdomain mismatch")
+        else:
+            if proxy_name == proxy.frps_name:
+                if proxy_type and proxy_type != ProxyType.XTCP.value:
+                    return _reject("proxy type mismatch")
+                proxy.p2p_xtcp_is_online = True
+            elif proxy_name == proxy.p2p_fallback_name:
+                if proxy_type and proxy_type != "stcp":
+                    return _reject("proxy type mismatch")
+                proxy.p2p_fallback_is_online = True
+            else:
+                return _reject("proxy name mismatch")
         proxy.is_online = True
         proxy.last_seen_at = datetime.now(UTC)
 
@@ -90,9 +103,17 @@ async def _handle_close_proxy(content: dict[str, Any]) -> dict[str, Any]:
                 proxy.current_speed_bps = sum(
                     mapping.current_speed_bps for mapping in proxy.tcp_mappings
                 )
-            else:
+            elif proxy.proxy_type == ProxyType.HTTP:
                 proxy.is_online = False
                 proxy.current_speed_bps = 0
+            else:
+                if proxy_name == proxy.frps_name:
+                    proxy.p2p_xtcp_is_online = False
+                elif proxy_name == proxy.p2p_fallback_name:
+                    proxy.p2p_fallback_is_online = False
+                proxy.is_online = proxy.p2p_xtcp_is_online or proxy.p2p_fallback_is_online
+                if not proxy.p2p_fallback_is_online:
+                    proxy.current_speed_bps = 0
             proxy.last_seen_at = datetime.now(UTC)
     return _allow()
 
