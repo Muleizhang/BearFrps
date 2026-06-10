@@ -245,23 +245,11 @@ def _apply_p2p_poll_info(
 
 def _charge_usage(proxy: Proxy, delta: int) -> bool:
     proxy.traffic_used_bytes += delta
-    user = store.users.get(proxy.uid)
-    if not user:
-        return False
-    used_mb = delta // (1024 * 1024)
-    if delta % (1024 * 1024):
-        used_mb += 1
-    user.balance_mb = max(0, user.balance_mb - used_mb)
-    return bool(user.username and user.password_hash)
+    return False
 
 
 def _apply_stop_rules(proxy: Proxy) -> None:
     if proxy.status != ProxyStatus.ACTIVE:
-        return
-    user = store.users.get(proxy.uid)
-    if user and user.balance_mb <= 0:
-        proxy.status = ProxyStatus.STOPPED_BY_ADMIN
-        proxy.is_online = False
         return
     if proxy.traffic_used_bytes >= proxy.traffic_limit_mb * 1024 * 1024:
         proxy.status = ProxyStatus.STOPPED_BY_ADMIN

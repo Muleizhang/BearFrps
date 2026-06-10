@@ -110,7 +110,7 @@ async def list_admin_proxies() -> dict[str, list[dict[str, object]]]:
     host = settings.server_public_host
     for p in proxies:
         if p.get("proxy_type") == ProxyType.HTTP.value:
-            port = settings.frps_vhost_http_port
+            port = settings.public_vhost_http_port
             port_part = "" if port == 80 else f":{port}"
             p["public_url"] = (
                 f"http://{p['subdomain']}.{settings.effective_subdomain_host}{port_part}/"

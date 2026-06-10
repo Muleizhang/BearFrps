@@ -179,8 +179,6 @@ async def _handle_ping(content: dict[str, Any]) -> dict[str, Any]:
         if reason:
             return _reject(reason)
         assert user is not None
-        if user.balance_mb <= 0:
-            return _reject("insufficient balance")
         if not store.has_active_proxy_unlocked(user.uid):
             return _reject("no active proxy")
         now = datetime.now(UTC)
@@ -300,8 +298,6 @@ def _reject_reason_unlocked(proxy: Proxy | None) -> str | None:
         return "user not found"
     if proxy.status != ProxyStatus.ACTIVE:
         return "proxy is not active"
-    if user.balance_mb <= 0:
-        return "insufficient balance"
     if proxy.traffic_used_bytes >= proxy.traffic_limit_mb * 1024 * 1024:
         return "traffic limit exceeded"
     return None
@@ -310,8 +306,6 @@ def _reject_reason_unlocked(proxy: Proxy | None) -> str | None:
 def _reject_login_reason_unlocked(user: User | None) -> str | None:
     if user is None:
         return "invalid token"
-    if user.balance_mb <= 0:
-        return "insufficient balance"
     if not store.has_active_proxy_unlocked(user.uid):
         return "no active proxy"
     return None

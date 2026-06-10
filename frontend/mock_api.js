@@ -570,7 +570,7 @@
     p.local_ip = p.local_ip || "127.0.0.1";
     p.local_port = p.local_port || p.actual_local_port || 527;
     if (p.proxy_type === "http") {
-      p.public_url = p.subdomain ? "http://" + p.subdomain + "." + window.MOCK_SUBDOMAIN_HOST + ":8080/" : null;
+      p.public_url = p.subdomain ? "http://" + p.subdomain + "." + window.MOCK_SUBDOMAIN_HOST + "/" : null;
       p.public_urls = p.public_url ? [p.public_url] : [];
       p.tcp_mappings = [];
     } else if (p.proxy_type === "xtcp") {
