@@ -363,6 +363,7 @@ def test_create_tcp_range_validation_and_release():
             start + 1,
             start + 2,
         ]
+        assert [m["local_port"] for m in created.json()["proxy"]["tcp_mappings"]] == [9000, 9000, 9000]
 
         partial_conflict = client.post(
             "/api/proxies",
@@ -380,6 +381,24 @@ def test_create_tcp_range_validation_and_release():
         )
         assert partial_conflict.status_code == 400
         assert str(start + 2) in partial_conflict.json()["detail"]
+
+        many_to_many = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "range-many",
+                "traffic_mb": 1,
+                "tcp_ports": {
+                    "mode": "range",
+                    "mapping_mode": "many-to-many",
+                    "remote_start_port": start + 5,
+                    "remote_end_port": start + 6,
+                    "local_start_port": 9400,
+                },
+            },
+        )
+        assert many_to_many.status_code == 200
+        assert [m["local_port"] for m in many_to_many.json()["proxy"]["tcp_mappings"]] == [9400, 9401]
 
         too_many = client.post(
             "/api/proxies",
@@ -404,6 +423,7 @@ def test_create_tcp_range_validation_and_release():
                 "traffic_mb": 1,
                 "tcp_ports": {
                     "mode": "range",
+                    "mapping_mode": "many-to-many",
                     "remote_start_port": start + 10,
                     "remote_end_port": start + 11,
                     "local_start_port": 65535,

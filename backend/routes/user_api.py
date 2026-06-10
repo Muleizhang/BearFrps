@@ -152,6 +152,7 @@ _HOST_HEADER_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?$")
 
 class TcpPortsRequest(BaseModel):
     mode: Literal["auto", "single", "range"] = "auto"
+    mapping_mode: Literal["many-to-one", "many-to-many"] = "many-to-one"
     count: int | None = Field(default=None, ge=1)
     local_start_port: int | None = Field(default=None, ge=1, le=65535)
     remote_port: int | None = Field(default=None, ge=1, le=65535)
@@ -539,7 +540,10 @@ def _allocate_tcp_ports(
     count = tcp_ports.remote_end_port - tcp_ports.remote_start_port + 1
     _validate_tcp_port_count(count)
     remote_ports = list(range(tcp_ports.remote_start_port, tcp_ports.remote_end_port + 1))
-    local_ports = _local_ports_from_start(tcp_ports.local_start_port, count)
+    if tcp_ports.mapping_mode == "many-to-many":
+        local_ports = _local_ports_from_start(tcp_ports.local_start_port, count)
+    else:
+        local_ports = [tcp_ports.local_start_port] * count
     _reserve_requested_remote_ports(remote_ports)
     return remote_ports, local_ports
 

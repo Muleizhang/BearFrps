@@ -474,12 +474,15 @@
     var remoteStart = Number(cfg.remote_start_port || 0);
     var remoteEnd = Number(cfg.remote_end_port || 0);
     var rangeLocalStart = Number(cfg.local_start_port || 0);
+    var mappingMode = cfg.mapping_mode === "many-to-many" ? "many-to-many" : "many-to-one";
     if (!validPort(remoteStart) || !validPort(remoteEnd)) return { error: "请输入有效公网端口段" };
-    if (!validPort(rangeLocalStart)) return { error: "请输入有效本地起始端口" };
+    if (!validPort(rangeLocalStart)) return { error: mappingMode === "many-to-many" ? "请输入有效本地起始端口" : "请输入有效本地端口" };
     if (remoteStart > remoteEnd) return { error: "公网起始端口不能大于结束端口" };
     var rangeCount = remoteEnd - remoteStart + 1;
     if (rangeCount > 10) return { error: "单个 TCP 配置最多 10 个端口" };
-    var rangeLocalPlan = localPortsFromStart(rangeLocalStart, rangeCount);
+    var rangeLocalPlan = mappingMode === "many-to-many"
+      ? localPortsFromStart(rangeLocalStart, rangeCount)
+      : { ports: Array(rangeCount).fill(rangeLocalStart) };
     if (rangeLocalPlan.error) return rangeLocalPlan;
     var requested = [];
     for (var j = 0; j < rangeCount; j++) requested.push(remoteStart + j);

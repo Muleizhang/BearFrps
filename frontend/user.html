@@ -67,7 +67,7 @@
     local_ip 默认 127.0.0.1，适合用户本机服务。
     TCP auto 模式只需要 count 和 local_start_port。
     TCP single 模式需要 remote_port 和 local_port。
-    TCP range 模式需要 remote_start_port、remote_end_port 和 range_local_start_port。
+    TCP range 模式需要 remote_start_port、remote_end_port、range_local_start_port 和 range_mapping_mode。
     HTTP subdomain 需要符合后端子域名规则。
     visitor_bind_port 是本地访问 STCP/XTCP visitor 的端口。
     fallback_timeout_ms 只对 XTCP fallback 有意义。
@@ -101,7 +101,9 @@
     port_mode=single 时 remote_port 是用户指定公网端口。
     port_mode=single 时 local_port 是用户本地服务端口。
     port_mode=range 时 remote_start_port 和 remote_end_port 必须形成闭区间。
-    port_mode=range 时 range_local_start_port 对应第一个远程端口。
+    port_mode=range 时 range_mapping_mode 决定本地端口固定接收或同步自增。
+    port_mode=range 且 many-to-one 时 range_local_start_port 表示固定本地端口。
+    port_mode=range 且 many-to-many 时 range_local_start_port 对应第一个远程端口。
     local_ip 默认为 127.0.0.1，支持用户改为局域网地址。
     多端口映射在列表中通过 tcp_mappings 展示。
 
@@ -472,6 +474,19 @@
             </div>
           </div>
           <div class="space-y-3" x-show="createForms.tcp.port_mode === 'range'">
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-2">映射模式</label>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <label class="flex items-start gap-2 rounded-md border border-gray-200 bg-white px-3 py-2 cursor-pointer hover:border-blue-300">
+                  <input class="mt-1" type="radio" value="many-to-one" x-model="createForms.tcp.range_mapping_mode">
+                  <span class="text-sm text-gray-700">多对一（公网多端口映射到本地单端口）</span>
+                </label>
+                <label class="flex items-start gap-2 rounded-md border border-gray-200 bg-white px-3 py-2 cursor-pointer hover:border-blue-300">
+                  <input class="mt-1" type="radio" value="many-to-many" x-model="createForms.tcp.range_mapping_mode">
+                  <span class="text-sm text-gray-700">多对多（公网与本地端口一一对应自增）</span>
+                </label>
+              </div>
+            </div>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label class="block text-sm font-medium text-gray-600 mb-1">公网起始端口</label>
@@ -482,7 +497,7 @@
                 <input class="input" type="number" x-model.number="createForms.tcp.remote_end_port" min="1" max="65535">
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-600 mb-1">本地起始端口</label>
+                <label class="block text-sm font-medium text-gray-600 mb-1" x-text="rangeLocalPortLabel()"></label>
                 <input class="input" type="number" x-model.number="createForms.tcp.range_local_start_port" min="1" max="65535">
               </div>
             </div>
@@ -820,6 +835,7 @@
             remote_start_port: null,
             remote_end_port: null,
             range_local_start_port: 9527,
+            range_mapping_mode: 'many-to-one',
             advanced: defaultAdvancedConfig()
           },
           http: { name: '', traffic_mb: 0, speed_limit_kbps: 1024, local_ip: '127.0.0.1', local_port: 9527, subdomain: '', advanced: defaultAdvancedConfig() },
@@ -1124,15 +1140,17 @@
           var remoteStart = Number(form.remote_start_port || 0);
           var remoteEnd = Number(form.remote_end_port || 0);
           var rangeLocalStart = Number(form.range_local_start_port || 0);
+          var mappingMode = form.range_mapping_mode === 'many-to-many' ? 'many-to-many' : 'many-to-one';
           if (!this.validatePort(remoteStart, '公网起始端口')) return null;
           if (!this.validatePort(remoteEnd, '公网结束端口')) return null;
-          if (!this.validatePort(rangeLocalStart, '本地起始端口')) return null;
+          if (!this.validatePort(rangeLocalStart, mappingMode === 'many-to-many' ? '本地起始端口' : '本地端口')) return null;
           if (remoteStart > remoteEnd) { this.createError = '公网起始端口不能大于结束端口'; return null; }
           var rangeCount = remoteEnd - remoteStart + 1;
           if (!this.validateTcpCount(rangeCount)) return null;
-          if (!this.validateLocalRange(rangeLocalStart, rangeCount)) return null;
+          if (mappingMode === 'many-to-many' && !this.validateLocalRange(rangeLocalStart, rangeCount)) return null;
           return {
             mode: 'range',
+            mapping_mode: mappingMode,
             remote_start_port: remoteStart,
             remote_end_port: remoteEnd,
             local_start_port: rangeLocalStart
@@ -1246,18 +1264,26 @@
           return true;
         },
 
+        rangeLocalPortLabel() {
+          var mode = this.createForms.tcp.range_mapping_mode || 'many-to-one';
+          return mode === 'many-to-many' ? '本地起始端口' : '本地端口';
+        },
+
         tcpRangePreview() {
           var f = this.createForms.tcp;
           var start = Number(f.remote_start_port || 0);
           var end = Number(f.remote_end_port || 0);
           var local = Number(f.range_local_start_port || 0);
+          var mappingMode = f.range_mapping_mode === 'many-to-many' ? 'many-to-many' : 'many-to-one';
           if (!start || !end || !local) return '填写端口段后显示映射预览';
           if (start > end) return '公网起始端口不能大于结束端口';
           var count = end - start + 1;
           if (count > 10) return '单个 TCP 配置最多 10 个端口';
-          if (local + count - 1 > 65535) return '本地端口段必须在 1-65535 之间';
+          if (mappingMode === 'many-to-many' && local + count - 1 > 65535) return '本地端口段必须在 1-65535 之间';
           var lines = [];
-          for (var i = 0; i < count; i++) lines.push((start + i) + ' -> ' + (local + i));
+          for (var i = 0; i < count; i++) {
+            lines.push((start + i) + ' -> ' + (mappingMode === 'many-to-many' ? local + i : local));
+          }
           return lines.join('\n');
         },
 
