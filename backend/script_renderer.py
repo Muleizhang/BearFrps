@@ -73,8 +73,7 @@ class ScriptRenderer:
                         f'localIP = "{_toml_str(proxy.local_ip)}"',
                         f"localPort = {mapping.local_port}",
                         f"remotePort = {mapping.remote_port}",
-                        f'transport.bandwidthLimit = "{proxy.speed_limit_kbps}KB"',
-                        'transport.bandwidthLimitMode = "server"',
+                        *self._proxy_transport_lines(proxy),
                         "",
                     ]
                 )
@@ -94,8 +93,7 @@ class ScriptRenderer:
                         f'localIP = "{_toml_str(proxy.local_ip)}"',
                         f"localPort = {proxy.local_port}",
                         'allowUsers = ["*"]',
-                        f'transport.bandwidthLimit = "{proxy.speed_limit_kbps}KB"',
-                        'transport.bandwidthLimitMode = "server"',
+                        *self._proxy_transport_lines(proxy),
                         "",
                     ]
                 )
@@ -108,12 +106,37 @@ class ScriptRenderer:
                     f'localIP = "{_toml_str(proxy.local_ip)}"',
                     f"localPort = {proxy.local_port}",
                     f'subdomain = "{_toml_str(proxy.subdomain or "")}"',
-                    f'transport.bandwidthLimit = "{proxy.speed_limit_kbps}KB"',
-                    'transport.bandwidthLimitMode = "server"',
+                    *self._http_advanced_lines(proxy),
+                    *self._proxy_transport_lines(proxy),
                     "",
                 ]
             )
         return "\n".join(lines)
+
+    def _proxy_transport_lines(self, proxy: Proxy) -> list[str]:
+        return [
+            f'transport.bandwidthLimit = "{proxy.speed_limit_kbps}KB"',
+            f'transport.bandwidthLimitMode = "{_toml_str(proxy.bandwidth_limit_mode)}"',
+            f"transport.useEncryption = {_toml_bool(proxy.use_encryption)}",
+            f"transport.useCompression = {_toml_bool(proxy.use_compression)}",
+        ]
+
+    def _http_advanced_lines(self, proxy: Proxy) -> list[str]:
+        lines = []
+        if proxy.http_user and proxy.http_password:
+            lines.extend(
+                [
+                    f'httpUser = "{_toml_str(proxy.http_user)}"',
+                    f'httpPassword = "{_toml_str(proxy.http_password)}"',
+                ]
+            )
+        if proxy.http_locations:
+            lines.append(f"locations = {_toml_array(proxy.http_locations)}")
+        if proxy.host_header_rewrite:
+            lines.append(
+                f'hostHeaderRewrite = "{_toml_str(proxy.host_header_rewrite)}"'
+            )
+        return lines
 
     def render_frpc_visitor_config(self, proxy: Proxy, settings: Settings) -> str:
         if proxy.proxy_type != ProxyType.XTCP:
@@ -212,6 +235,10 @@ def _toml_str(value: str) -> str:
 
 def _toml_bool(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _toml_array(values: list[str]) -> str:
+    return "[" + ", ".join(f'"{_toml_str(value)}"' for value in values) + "]"
 
 
 FRPC_UNIX_FALLBACK = r"""#!/bin/bash

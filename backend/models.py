@@ -4,7 +4,7 @@ import asyncio
 import secrets
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -70,6 +70,13 @@ class Proxy(BaseModel):
     visitor_bind_port: int = 9001
     keep_tunnel_open: bool = True
     fallback_timeout_ms: int = 1000
+    use_encryption: bool = False
+    use_compression: bool = False
+    bandwidth_limit_mode: Literal["server", "client"] = "server"
+    http_user: str | None = None
+    http_password: str | None = None
+    http_locations: list[str] = Field(default_factory=list)
+    host_header_rewrite: str | None = None
     p2p_xtcp_is_online: bool = False
     p2p_fallback_is_online: bool = False
     actual_local_port: int | None = None
@@ -248,6 +255,13 @@ class Store:
             "visitor_endpoint": f"{proxy.visitor_bind_addr}:{proxy.visitor_bind_port}",
             "keep_tunnel_open": proxy.keep_tunnel_open,
             "fallback_timeout_ms": proxy.fallback_timeout_ms,
+            "use_encryption": proxy.use_encryption,
+            "use_compression": proxy.use_compression,
+            "bandwidth_limit_mode": proxy.bandwidth_limit_mode,
+            "http_user": proxy.http_user,
+            "http_password": proxy.http_password,
+            "http_locations": proxy.http_locations,
+            "host_header_rewrite": proxy.host_header_rewrite,
             "p2p_xtcp_is_online": proxy.p2p_xtcp_is_online,
             "p2p_fallback_is_online": proxy.p2p_fallback_is_online,
             "actual_local_port": proxy.actual_local_port,

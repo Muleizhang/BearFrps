@@ -281,6 +281,67 @@
             <input class="input" type="number" x-model.number="createForms.xtcp.speed_limit_kbps" placeholder="1024">
           </div>
         </div>
+        <div class="border border-gray-200 rounded-md overflow-hidden">
+          <button type="button"
+                  class="w-full px-3 py-2 bg-gray-50 text-sm font-medium text-gray-700 flex items-center justify-between hover:bg-gray-100 transition-colors"
+                  @click="advancedOpen = !advancedOpen">
+            <span>高级配置</span>
+            <span class="text-xs text-gray-500" x-text="advancedOpen ? '收起' : '展开'"></span>
+          </button>
+          <div class="p-3 space-y-4" x-show="advancedOpen">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label class="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" class="rounded border-gray-300" x-model="createForms[createType].advanced.use_encryption">
+                <span>启用传输加密</span>
+              </label>
+              <label class="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" class="rounded border-gray-300" x-model="createForms[createType].advanced.use_compression">
+                <span>启用传输压缩</span>
+              </label>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-1">限速位置</label>
+              <div class="flex gap-1 rounded-md bg-gray-100 p-1">
+                <button type="button" class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                        :class="createForms[createType].advanced.bandwidth_limit_mode === 'server' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                        @click="createForms[createType].advanced.bandwidth_limit_mode = 'server'">服务端</button>
+                <button type="button" class="flex-1 px-3 py-2 text-sm font-medium rounded transition-colors"
+                        :class="createForms[createType].advanced.bandwidth_limit_mode === 'client' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'"
+                        @click="createForms[createType].advanced.bandwidth_limit_mode = 'client'">客户端</button>
+              </div>
+            </div>
+            <div class="space-y-3" x-show="createType === 'http'">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-600 mb-1">HTTP 认证用户名</label>
+                  <input class="input" x-model.trim="createForms.http.advanced.http_user" maxlength="64">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-600 mb-1">HTTP 认证密码</label>
+                  <input class="input" type="password" x-model="createForms.http.advanced.http_password" maxlength="128">
+                </div>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">HTTP 路径</label>
+                <textarea class="input min-h-[76px]" x-model="createForms.http.advanced.http_locations_text" placeholder="/,/api"></textarea>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">Host 改写</label>
+                <input class="input" x-model.trim="createForms.http.advanced.host_header_rewrite" placeholder="example.com">
+              </div>
+            </div>
+            <div class="space-y-3" x-show="createType === 'xtcp'">
+              <label class="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" class="rounded border-gray-300" x-model="createForms.xtcp.advanced.keep_tunnel_open">
+                <span>保持 P2P 隧道</span>
+              </label>
+              <div>
+                <label class="block text-sm font-medium text-gray-600 mb-1">fallback 超时 ms</label>
+                <input class="input" type="number" x-model.number="createForms.xtcp.advanced.fallback_timeout_ms" min="100" max="10000">
+              </div>
+            </div>
+          </div>
+        </div>
         <div x-show="createError" class="text-red-600 text-sm" x-text="createError"></div>
         <div class="flex justify-end gap-2">
           <button class="btn btn-secondary" @click="openCreateModal = false">取消</button>
@@ -425,6 +486,20 @@
   </div>
 
   <script>
+    function defaultAdvancedConfig() {
+      return {
+        use_encryption: false,
+        use_compression: false,
+        bandwidth_limit_mode: 'server',
+        http_user: '',
+        http_password: '',
+        http_locations_text: '',
+        host_header_rewrite: '',
+        keep_tunnel_open: true,
+        fallback_timeout_ms: 1000
+      };
+    }
+
     function userApp() {
       return {
         loggedIn: false,
@@ -441,6 +516,7 @@
         recharging: false,
         openCreateModal: false,
         openScriptModal: false,
+        advancedOpen: false,
         createType: 'tcp',
         createForms: {
           tcp: {
@@ -455,10 +531,11 @@
             local_port: 9527,
             remote_start_port: null,
             remote_end_port: null,
-            range_local_start_port: 9527
+            range_local_start_port: 9527,
+            advanced: defaultAdvancedConfig()
           },
-          http: { name: '', traffic_mb: 0, speed_limit_kbps: 1024, local_ip: '127.0.0.1', local_port: 9527, subdomain: '' },
-          xtcp: { name: '', traffic_mb: 0, speed_limit_kbps: 1024, local_ip: '127.0.0.1', local_port: 9527, visitor_bind_port: 9001 }
+          http: { name: '', traffic_mb: 0, speed_limit_kbps: 1024, local_ip: '127.0.0.1', local_port: 9527, subdomain: '', advanced: defaultAdvancedConfig() },
+          xtcp: { name: '', traffic_mb: 0, speed_limit_kbps: 1024, local_ip: '127.0.0.1', local_port: 9527, visitor_bind_port: 9001, advanced: defaultAdvancedConfig() }
         },
         createError: '',
         creating: false,
@@ -612,6 +689,9 @@
             if (!this.validatePort(payload.local_port, '电脑本地端口')) return;
             if (!this.validatePort(payload.visitor_bind_port, '手机访问端监听端口')) return;
           }
+          const advancedConfig = this.buildAdvancedConfigPayload(form);
+          if (!advancedConfig) return;
+          payload.advanced_config = advancedConfig;
           this.creating = true;
           try {
             const res = await fetch('/api/proxies', {
@@ -729,6 +809,89 @@
             remote_end_port: remoteEnd,
             local_start_port: rangeLocalStart
           };
+        },
+
+        buildAdvancedConfigPayload(form) {
+          var advanced = form.advanced || defaultAdvancedConfig();
+          var mode = advanced.bandwidth_limit_mode === 'client' ? 'client' : 'server';
+          var payload = {
+            use_encryption: !!advanced.use_encryption,
+            use_compression: !!advanced.use_compression,
+            bandwidth_limit_mode: mode
+          };
+          if (this.createType === 'http') {
+            var httpUser = String(advanced.http_user || '').trim();
+            var httpPassword = String(advanced.http_password || '').trim();
+            if ((httpUser && !httpPassword) || (!httpUser && httpPassword)) {
+              this.createError = 'HTTP 认证用户名和密码需同时填写';
+              return null;
+            }
+            if (httpUser) {
+              payload.http_user = httpUser;
+              payload.http_password = httpPassword;
+            }
+            var locations = this.parseHttpLocations(advanced.http_locations_text);
+            if (!locations) return null;
+            if (locations.length) payload.http_locations = locations;
+            var hostHeader = String(advanced.host_header_rewrite || '').trim();
+            if (hostHeader) {
+              if (!this.validateHostHeader(hostHeader)) return null;
+              payload.host_header_rewrite = hostHeader;
+            }
+          }
+          if (this.createType === 'xtcp') {
+            var rawTimeout = advanced.fallback_timeout_ms;
+            var fallbackTimeout = rawTimeout === '' || rawTimeout == null ? 1000 : Number(rawTimeout);
+            if (!fallbackTimeout || fallbackTimeout < 100 || fallbackTimeout > 10000) {
+              this.createError = 'fallback 超时需在 100-10000 ms 之间';
+              return null;
+            }
+            payload.keep_tunnel_open = !!advanced.keep_tunnel_open;
+            payload.fallback_timeout_ms = fallbackTimeout;
+          }
+          return payload;
+        },
+
+        parseHttpLocations(text) {
+          var locations = String(text || '').split(/[\n,]+/).map(function (item) {
+            return item.trim();
+          }).filter(Boolean);
+          if (locations.length > 10) {
+            this.createError = 'HTTP 路径最多 10 条';
+            return null;
+          }
+          for (var i = 0; i < locations.length; i++) {
+            if (locations[i].charAt(0) !== '/') {
+              this.createError = 'HTTP 路径必须以 / 开头';
+              return null;
+            }
+            if (/\s/.test(locations[i])) {
+              this.createError = 'HTTP 路径不能包含空白字符';
+              return null;
+            }
+          }
+          return locations;
+        },
+
+        validateHostHeader(value) {
+          if (!/^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$/.test(value)) {
+            this.createError = 'Host 改写格式不合法';
+            return false;
+          }
+          var parts = value.split(':');
+          if (parts.length === 2) {
+            var port = Number(parts[1]);
+            if (!port || port < 1 || port > 65535) {
+              this.createError = 'Host 改写端口不合法';
+              return false;
+            }
+          }
+          var hostname = parts[0];
+          if (hostname.indexOf('..') !== -1 || hostname.charAt(0) === '.' || hostname.charAt(hostname.length - 1) === '.') {
+            this.createError = 'Host 改写格式不合法';
+            return false;
+          }
+          return true;
         },
 
         validatePort(value, label) {

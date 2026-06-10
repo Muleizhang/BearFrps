@@ -101,6 +101,36 @@ def test_create_tcp_auto_multiple_ports():
         assert "localPort = 8002" in body["frpc_config"]
 
 
+def test_create_tcp_proxy_with_advanced_transport_config():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "tcp",
+                "name": "secure",
+                "traffic_mb": 10,
+                "speed_limit_kbps": 512,
+                "advanced_config": {
+                    "use_encryption": True,
+                    "use_compression": True,
+                    "bandwidth_limit_mode": "client",
+                },
+            },
+        )
+        assert created.status_code == 200
+        body = created.json()
+        proxy = body["proxy"]
+        assert proxy["use_encryption"] is True
+        assert proxy["use_compression"] is True
+        assert proxy["bandwidth_limit_mode"] == "client"
+        assert 'transport.bandwidthLimitMode = "client"' in body["frpc_config"]
+        assert "transport.useEncryption = true" in body["frpc_config"]
+        assert "transport.useCompression = true" in body["frpc_config"]
+
+
 def test_create_tcp_single_port_and_occupied_failure():
     with TestClient(app) as client:
         register_user(client)
@@ -282,6 +312,43 @@ def test_create_http_proxy_and_scripts():
         assert duplicate.status_code == 400
 
 
+def test_create_http_proxy_with_advanced_config():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "http",
+                "name": "advanced-site",
+                "traffic_mb": 10,
+                "local_ip": "localhost",
+                "local_port": 8080,
+                "subdomain": "advanced-site",
+                "advanced_config": {
+                    "use_encryption": True,
+                    "http_user": "admin",
+                    "http_password": "secret",
+                    "http_locations": ["/", "/api"],
+                    "host_header_rewrite": "example.com:8080",
+                },
+            },
+        )
+        assert created.status_code == 200
+        body = created.json()
+        proxy = body["proxy"]
+        assert proxy["http_user"] == "admin"
+        assert proxy["http_password"] == "secret"
+        assert proxy["http_locations"] == ["/", "/api"]
+        assert proxy["host_header_rewrite"] == "example.com:8080"
+        assert 'httpUser = "admin"' in body["frpc_config"]
+        assert 'httpPassword = "secret"' in body["frpc_config"]
+        assert 'locations = ["/", "/api"]' in body["frpc_config"]
+        assert 'hostHeaderRewrite = "example.com:8080"' in body["frpc_config"]
+        assert "transport.useEncryption = true" in body["frpc_config"]
+
+
 def test_create_xtcp_proxy_and_visitor_scripts():
     with TestClient(app) as client:
         register_user(client)
@@ -327,6 +394,92 @@ def test_create_xtcp_proxy_and_visitor_scripts():
         assert "bindPort = 9001" in visitor_config
         assert "bindPort = -1" in visitor_config
         assert body["scripts"]["visitor"]["linux"]
+
+
+def test_create_xtcp_proxy_with_advanced_config():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+
+        created = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "xtcp",
+                "name": "phone-advanced",
+                "traffic_mb": 10,
+                "local_ip": "127.0.0.1",
+                "local_port": 8123,
+                "visitor_bind_port": 9002,
+                "advanced_config": {
+                    "use_compression": True,
+                    "keep_tunnel_open": False,
+                    "fallback_timeout_ms": 1500,
+                },
+            },
+        )
+        assert created.status_code == 200
+        body = created.json()
+        proxy = body["proxy"]
+        assert proxy["keep_tunnel_open"] is False
+        assert proxy["fallback_timeout_ms"] == 1500
+        assert proxy["use_compression"] is True
+        assert "transport.useCompression = true" in body["frpc_configs"]["server"]
+        assert "keepTunnelOpen = false" in body["frpc_configs"]["visitor"]
+        assert "fallbackTimeoutMs = 1500" in body["frpc_configs"]["visitor"]
+
+
+def test_create_proxy_advanced_config_validation_errors():
+    with TestClient(app) as client:
+        register_user(client)
+        client.post("/api/user/recharge", json={})
+
+        bad_mode = client.post(
+            "/api/proxies",
+            json={
+                "name": "bad-mode",
+                "traffic_mb": 1,
+                "advanced_config": {"bandwidth_limit_mode": "edge"},
+            },
+        )
+        assert bad_mode.status_code == 400
+
+        bad_auth = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "http",
+                "name": "bad-auth",
+                "traffic_mb": 1,
+                "local_port": 8080,
+                "subdomain": "bad-auth",
+                "advanced_config": {"http_user": "admin"},
+            },
+        )
+        assert bad_auth.status_code == 400
+
+        bad_location = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "http",
+                "name": "bad-location",
+                "traffic_mb": 1,
+                "local_port": 8080,
+                "subdomain": "bad-location",
+                "advanced_config": {"http_locations": ["api"]},
+            },
+        )
+        assert bad_location.status_code == 400
+
+        bad_timeout = client.post(
+            "/api/proxies",
+            json={
+                "proxy_type": "xtcp",
+                "name": "bad-timeout",
+                "traffic_mb": 1,
+                "local_port": 8123,
+                "advanced_config": {"fallback_timeout_ms": 99},
+            },
+        )
+        assert bad_timeout.status_code == 400
 
 
 def test_user_auth_login_logout_and_persistence():

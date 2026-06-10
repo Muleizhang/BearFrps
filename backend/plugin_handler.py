@@ -85,7 +85,7 @@ async def _handle_new_proxy(content: dict[str, Any]) -> dict[str, Any]:
         proxy.last_seen_at = datetime.now(UTC)
 
         content["bandwidth_limit"] = f"{proxy.speed_limit_kbps}KB"
-        content["bandwidth_limit_mode"] = "server"
+        content["bandwidth_limit_mode"] = proxy.bandwidth_limit_mode
         return _modify(content)
 
 

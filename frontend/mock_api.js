@@ -169,6 +169,78 @@
     return { remote_ports: requested, local_ports: rangeLocalPlan.ports };
   }
 
+  function cleanOptional(value) {
+    var text = String(value || "").trim();
+    return text || null;
+  }
+
+  function normalizeHttpLocations(values) {
+    var locations = Array.isArray(values) ? values : [];
+    var normalized = [];
+    for (var i = 0; i < locations.length; i++) {
+      var location = String(locations[i] || "").trim();
+      if (!location) continue;
+      if (location.charAt(0) !== "/") return { error: "HTTP 路径必须以 / 开头" };
+      if (/\s/.test(location)) return { error: "HTTP 路径不能包含空白字符" };
+      normalized.push(location);
+    }
+    if (normalized.length > 10) return { error: "HTTP 路径最多 10 条" };
+    return { locations: normalized };
+  }
+
+  function normalizeHostHeader(value) {
+    var host = cleanOptional(value);
+    if (!host) return { host: null };
+    if (!/^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$/.test(host)) {
+      return { error: "Host 改写格式不合法" };
+    }
+    var parts = host.split(":");
+    if (parts.length === 2) {
+      var port = Number(parts[1]);
+      if (!port || port < 1 || port > 65535) return { error: "Host 改写端口不合法" };
+    }
+    var hostname = parts[0];
+    if (hostname.indexOf("..") !== -1 || hostname.charAt(0) === "." || hostname.charAt(hostname.length - 1) === ".") {
+      return { error: "Host 改写格式不合法" };
+    }
+    return { host: host };
+  }
+
+  function normalizeAdvancedConfig(config, proxyType) {
+    config = config || {};
+    var mode = config.bandwidth_limit_mode === "client" ? "client" : "server";
+    var httpUser = cleanOptional(config.http_user);
+    var httpPassword = cleanOptional(config.http_password);
+    if (!!httpUser !== !!httpPassword) {
+      return { error: "HTTP 认证用户名和密码需同时填写" };
+    }
+    var result = {
+      use_encryption: !!config.use_encryption,
+      use_compression: !!config.use_compression,
+      bandwidth_limit_mode: mode,
+      http_user: null,
+      http_password: null,
+      http_locations: [],
+      host_header_rewrite: null,
+      keep_tunnel_open: config.keep_tunnel_open == null ? true : !!config.keep_tunnel_open,
+      fallback_timeout_ms: config.fallback_timeout_ms == null ? 1000 : Number(config.fallback_timeout_ms)
+    };
+    if (!result.fallback_timeout_ms || result.fallback_timeout_ms < 100 || result.fallback_timeout_ms > 10000) {
+      return { error: "fallback 超时需在 100-10000 ms 之间" };
+    }
+    if (proxyType === "http") {
+      var locations = normalizeHttpLocations(config.http_locations);
+      if (locations.error) return locations;
+      var hostHeader = normalizeHostHeader(config.host_header_rewrite);
+      if (hostHeader.error) return hostHeader;
+      result.http_user = httpUser;
+      result.http_password = httpPassword;
+      result.http_locations = locations.locations;
+      result.host_header_rewrite = hostHeader.host;
+    }
+    return result;
+  }
+
   let adminSession = false;
   let mockAllocatableStart = 50000;
   let mockAllocatableEnd = 50100;
@@ -204,6 +276,40 @@
     return p;
   }
 
+  function tomlBool(value) {
+    return value ? "true" : "false";
+  }
+
+  function tomlString(value) {
+    return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
+  function tomlArray(values) {
+    return "[" + values.map(function (value) {
+      return '"' + tomlString(value) + '"';
+    }).join(", ") + "]";
+  }
+
+  function pushTransportLines(lines, proxy) {
+    lines.push('transport.bandwidthLimit = "' + (proxy.speed_limit_kbps || 1024) + 'KB"');
+    lines.push('transport.bandwidthLimitMode = "' + (proxy.bandwidth_limit_mode || "server") + '"');
+    lines.push('transport.useEncryption = ' + tomlBool(!!proxy.use_encryption));
+    lines.push('transport.useCompression = ' + tomlBool(!!proxy.use_compression));
+  }
+
+  function pushHttpAdvancedLines(lines, proxy) {
+    if (proxy.http_user && proxy.http_password) {
+      lines.push('httpUser = "' + tomlString(proxy.http_user) + '"');
+      lines.push('httpPassword = "' + tomlString(proxy.http_password) + '"');
+    }
+    if (Array.isArray(proxy.http_locations) && proxy.http_locations.length) {
+      lines.push("locations = " + tomlArray(proxy.http_locations));
+    }
+    if (proxy.host_header_rewrite) {
+      lines.push('hostHeaderRewrite = "' + tomlString(proxy.host_header_rewrite) + '"');
+    }
+  }
+
   function makeFrpcConfig(proxy) {
     proxy = withPublicUrl(proxy);
     var lines = [
@@ -222,6 +328,9 @@
       lines.push('localIP = "' + proxy.local_ip + '"');
       lines.push('localPort = ' + proxy.local_port);
       lines.push('subdomain = "' + proxy.subdomain + '"');
+      pushHttpAdvancedLines(lines, proxy);
+      pushTransportLines(lines, proxy);
+      lines.push('');
     } else if (proxy.proxy_type === "xtcp") {
       var secret = proxy.p2p_secret_key || proxy.token;
       var fallbackName = proxy.p2p_fallback_name || ((proxy.frps_name || proxy.name) + "__fallback");
@@ -236,8 +345,7 @@
         lines.push('localIP = "' + proxy.local_ip + '"');
         lines.push('localPort = ' + proxy.local_port);
         lines.push('allowUsers = ["*"]');
-        lines.push('transport.bandwidthLimit = "' + (proxy.speed_limit_kbps || 1024) + 'KB"');
-        lines.push('transport.bandwidthLimitMode = "server"');
+        pushTransportLines(lines, proxy);
         lines.push('');
       });
       return lines.join("\n");
@@ -249,15 +357,11 @@
         lines.push('localIP = "' + proxy.local_ip + '"');
         lines.push('localPort = ' + m.local_port);
         lines.push('remotePort = ' + m.remote_port);
-        lines.push('transport.bandwidthLimit = "' + (proxy.speed_limit_kbps || 1024) + 'KB"');
-        lines.push('transport.bandwidthLimitMode = "server"');
+        pushTransportLines(lines, proxy);
         lines.push('');
       });
       return lines.join("\n");
     }
-    lines.push('transport.bandwidthLimit = "' + (proxy.speed_limit_kbps || 1024) + 'KB"');
-    lines.push('transport.bandwidthLimitMode = "server"');
-    lines.push('');
     return lines.join("\n");
   }
 
@@ -283,7 +387,7 @@
       'secretKey = "' + secret + '"',
       'bindAddr = "' + (proxy.visitor_bind_addr || "127.0.0.1") + '"',
       'bindPort = ' + (proxy.visitor_bind_port || 9001),
-      'keepTunnelOpen = true',
+      'keepTunnelOpen = ' + tomlBool(proxy.keep_tunnel_open !== false),
       'maxRetriesAnHour = 8',
       'minRetryInterval = 90',
       'fallbackTo = "' + fallbackVisitorName + '"',
@@ -549,6 +653,8 @@
         port = tcpPlan.remote_ports[0];
         localPort = tcpPlan.local_ports[0];
       }
+      var advanced = normalizeAdvancedConfig(body.advanced_config, proxyType);
+      if (advanced.error) return { status: 400, body: { detail: advanced.error } };
 
       if (proxyType !== "xtcp") user.balance_mb -= body.traffic_mb;
       users[user.uid] = user;
@@ -583,8 +689,15 @@
         p2p_fallback_name: proxyType === "xtcp" ? frpsName + "__fallback" : null,
         visitor_bind_addr: "127.0.0.1",
         visitor_bind_port: proxyType === "xtcp" ? visitorBindPort : 9001,
-        keep_tunnel_open: true,
-        fallback_timeout_ms: 1000,
+        keep_tunnel_open: advanced.keep_tunnel_open,
+        fallback_timeout_ms: advanced.fallback_timeout_ms,
+        use_encryption: advanced.use_encryption,
+        use_compression: advanced.use_compression,
+        bandwidth_limit_mode: advanced.bandwidth_limit_mode,
+        http_user: advanced.http_user,
+        http_password: advanced.http_password,
+        http_locations: advanced.http_locations,
+        host_header_rewrite: advanced.host_header_rewrite,
         p2p_xtcp_is_online: false,
         p2p_fallback_is_online: false,
         status: "active",

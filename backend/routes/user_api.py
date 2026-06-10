@@ -57,6 +57,7 @@ def _add_public_url(dto: dict[str, object]) -> dict[str, object]:
 router = APIRouter()
 _LOCAL_IP_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
 _SUBDOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$")
+_HOST_HEADER_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?$")
 
 
 class TcpPortsRequest(BaseModel):
@@ -69,6 +70,18 @@ class TcpPortsRequest(BaseModel):
     remote_end_port: int | None = Field(default=None, ge=1, le=65535)
 
 
+class AdvancedConfigRequest(BaseModel):
+    use_encryption: bool = False
+    use_compression: bool = False
+    bandwidth_limit_mode: str = "server"
+    http_user: str | None = Field(default=None, max_length=64)
+    http_password: str | None = Field(default=None, max_length=128)
+    http_locations: list[str] | None = None
+    host_header_rewrite: str | None = Field(default=None, max_length=260)
+    keep_tunnel_open: bool | None = None
+    fallback_timeout_ms: int | None = None
+
+
 class CreateProxyRequest(BaseModel):
     name: str = Field(min_length=1, max_length=20)
     proxy_type: ProxyType = ProxyType.TCP
@@ -79,6 +92,7 @@ class CreateProxyRequest(BaseModel):
     subdomain: str | None = None
     tcp_ports: TcpPortsRequest | None = None
     visitor_bind_port: int | None = Field(default=None, ge=1, le=65535)
+    advanced_config: AdvancedConfigRequest | None = None
 
 
 class UserAuthRequest(BaseModel):
@@ -166,6 +180,7 @@ async def create_proxy(
     local_port = body.local_port or settings.default_local_port
     subdomain = _normalize_subdomain(body.subdomain) if body.proxy_type == ProxyType.HTTP else None
     visitor_bind_port = body.visitor_bind_port or 9001
+    advanced_config = _normalize_advanced_config(body.proxy_type, body.advanced_config)
 
     async with store.lock:
         current = store.ensure_user_unlocked(user.uid)
@@ -218,6 +233,15 @@ async def create_proxy(
             p2p_secret_key=p2p_secret_key,
             p2p_fallback_name=p2p_fallback_name,
             visitor_bind_port=visitor_bind_port,
+            keep_tunnel_open=advanced_config["keep_tunnel_open"],
+            fallback_timeout_ms=advanced_config["fallback_timeout_ms"],
+            use_encryption=advanced_config["use_encryption"],
+            use_compression=advanced_config["use_compression"],
+            bandwidth_limit_mode=advanced_config["bandwidth_limit_mode"],
+            http_user=advanced_config["http_user"],
+            http_password=advanced_config["http_password"],
+            http_locations=advanced_config["http_locations"],
+            host_header_rewrite=advanced_config["host_header_rewrite"],
             actual_local_port=local_port,
             speed_limit_kbps=body.speed_limit_kbps or settings.default_speed_limit_kbps,
             traffic_limit_mb=body.traffic_mb,
@@ -283,6 +307,83 @@ def _normalize_subdomain(value: str | None) -> str:
     if not _SUBDOMAIN_RE.fullmatch(subdomain):
         raise HTTPException(status_code=400, detail="子域名需为 3-63 位小写字母、数字或连字符")
     return subdomain
+
+
+def _normalize_advanced_config(
+    proxy_type: ProxyType, advanced: AdvancedConfigRequest | None
+) -> dict[str, object]:
+    config = advanced or AdvancedConfigRequest()
+    if config.bandwidth_limit_mode not in ("server", "client"):
+        raise HTTPException(status_code=400, detail="限速位置必须是 server 或 client")
+    fallback_timeout_ms = (
+        config.fallback_timeout_ms if config.fallback_timeout_ms is not None else 1000
+    )
+    if fallback_timeout_ms < 100 or fallback_timeout_ms > 10000:
+        raise HTTPException(status_code=400, detail="fallback 超时需在 100-10000 ms 之间")
+    http_user = _clean_optional(config.http_user)
+    http_password = _clean_optional(config.http_password)
+    if bool(http_user) != bool(http_password):
+        raise HTTPException(status_code=400, detail="HTTP 认证用户名和密码需同时填写")
+
+    http_locations: list[str] = []
+    host_header_rewrite = None
+    if proxy_type == ProxyType.HTTP:
+        http_locations = _normalize_http_locations(config.http_locations)
+        host_header_rewrite = _normalize_host_header(config.host_header_rewrite)
+
+    return {
+        "use_encryption": config.use_encryption,
+        "use_compression": config.use_compression,
+        "bandwidth_limit_mode": config.bandwidth_limit_mode,
+        "http_user": http_user if proxy_type == ProxyType.HTTP else None,
+        "http_password": http_password if proxy_type == ProxyType.HTTP else None,
+        "http_locations": http_locations if proxy_type == ProxyType.HTTP else [],
+        "host_header_rewrite": host_header_rewrite,
+        "keep_tunnel_open": (
+            config.keep_tunnel_open if config.keep_tunnel_open is not None else True
+        ),
+        "fallback_timeout_ms": fallback_timeout_ms,
+    }
+
+
+def _clean_optional(value: str | None) -> str | None:
+    text = (value or "").strip()
+    return text or None
+
+
+def _normalize_http_locations(values: list[str] | None) -> list[str]:
+    locations = []
+    for item in values or []:
+        location = str(item).strip()
+        if not location:
+            continue
+        if not location.startswith("/"):
+            raise HTTPException(status_code=400, detail="HTTP 路径必须以 / 开头")
+        if any(char.isspace() for char in location):
+            raise HTTPException(status_code=400, detail="HTTP 路径不能包含空白字符")
+        locations.append(location)
+    if len(locations) > 10:
+        raise HTTPException(status_code=400, detail="HTTP 路径最多 10 条")
+    return locations
+
+
+def _normalize_host_header(value: str | None) -> str | None:
+    host = _clean_optional(value)
+    if host is None:
+        return None
+    if not _HOST_HEADER_RE.fullmatch(host):
+        raise HTTPException(status_code=400, detail="Host 改写格式不合法")
+    host_part, _, port_part = host.rpartition(":")
+    if port_part and host_part:
+        port = int(port_part)
+        if port < 1 or port > 65535:
+            raise HTTPException(status_code=400, detail="Host 改写端口不合法")
+        hostname = host_part
+    else:
+        hostname = host
+    if ".." in hostname or hostname.startswith(".") or hostname.endswith("."):
+        raise HTTPException(status_code=400, detail="Host 改写格式不合法")
+    return host
 
 
 def _allocate_tcp_ports(

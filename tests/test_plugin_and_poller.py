@@ -19,6 +19,7 @@ def test_plugin_accepts_user_token_and_rewrites_frps_auth():
                 token="user-token",
                 frps_remote_port=50000,
                 speed_limit_kbps=128,
+                bandwidth_limit_mode="client",
                 traffic_limit_mb=10,
             )
 
@@ -37,6 +38,7 @@ def test_plugin_accepts_user_token_and_rewrites_frps_auth():
         )
         assert new_proxy["reject"] is False
         assert new_proxy["content"]["bandwidth_limit"] == "128KB"
+        assert new_proxy["content"]["bandwidth_limit_mode"] == "client"
 
     asyncio.run(run())
 
