@@ -1,18 +1,37 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from backend.deps import settings
 from backend.main import app
-from backend.models import ProxyStatus, store
+from backend.auth import clear_all_user_sessions
+from backend.models import Proxy, ProxyStatus, store
+from backend.user_persistence import load_registered_users_unlocked
+
+
+def register_user(client: TestClient, username: str = "alice", password: str = "password123") -> dict[str, object]:
+    response = client.post(
+        "/api/user/register",
+        json={"username": username, "password": password},
+    )
+    assert response.status_code == 200
+    return response.json()
 
 
 def test_user_lifecycle_and_scripts():
     with TestClient(app) as client:
+        assert client.get("/api/user/me").status_code == 401
+
+        registered = register_user(client)
+        uid = registered["uid"]
+        assert uid.startswith("u_")
+        assert registered["username"] == "alice"
+
         init = client.post("/api/user/init", json={})
         assert init.status_code == 200
-        uid = init.json()["uid"]
-        assert uid.startswith("u_")
+        assert init.json()["uid"] == uid
 
         recharge = client.post("/api/user/recharge", json={})
         assert recharge.status_code == 200
@@ -28,6 +47,7 @@ def test_user_lifecycle_and_scripts():
         assert body["proxy"]["frps_remote_port"] == settings.allocatable_port_range_start
         assert "metadatas.token" in body["frpc_config"]
         assert body["scripts"]["frpc"]["linux"]
+        assert client.get("/api/user/me").json()["balance_mb"] == settings.free_recharge_amount_mb - 10
 
         listed = client.get("/api/proxies")
         assert listed.status_code == 200
@@ -42,18 +62,92 @@ def test_user_lifecycle_and_scripts():
         assert deleted.json() == {"ok": True}
 
 
-def test_invalid_uid_cookie_is_replaced():
+def test_user_auth_login_logout_and_persistence():
+    with TestClient(app) as client:
+        registered = register_user(client, username="persisted")
+        client.post("/api/user/recharge", json={})
+
+        duplicate = client.post(
+            "/api/user/register",
+            json={"username": "Persisted", "password": "password123"},
+        )
+        assert duplicate.status_code == 400
+
+        bad_login = client.post(
+            "/api/user/login",
+            json={"username": "persisted", "password": "wrong-password"},
+        )
+        assert bad_login.status_code == 401
+
+        logout = client.post("/api/user/logout", json={})
+        assert logout.status_code == 200
+        assert client.get("/api/user/me").status_code == 401
+
+        login = client.post(
+            "/api/user/login",
+            json={"username": "PERSISTED", "password": "password123"},
+        )
+        assert login.status_code == 200
+        assert login.json()["uid"] == registered["uid"]
+        assert login.json()["balance_mb"] == settings.free_recharge_amount_mb
+
+        clear_all_user_sessions()
+        store.reset()
+
+        async def reload_users():
+            async with store.lock:
+                load_registered_users_unlocked(store)
+
+        asyncio.run(reload_users())
+        login_after_reload = client.post(
+            "/api/user/login",
+            json={"username": "persisted", "password": "password123"},
+        )
+        assert login_after_reload.status_code == 200
+        assert login_after_reload.json()["balance_mb"] == settings.free_recharge_amount_mb
+
+
+def test_invalid_uid_cookie_does_not_authenticate():
     with TestClient(app) as client:
         client.cookies.set("uid", "not-valid")
-        init = client.post("/api/user/init", json={})
-        assert init.status_code == 200
-        assert init.json()["uid"].startswith("u_")
-        assert init.json()["uid"] != "not-valid"
+        assert client.get("/api/user/me").status_code == 401
+        registered = register_user(client)
+        assert registered["uid"].startswith("u_")
+        assert registered["uid"] != "not-valid"
+
+
+def test_register_migrates_legacy_uid_data():
+    with TestClient(app) as client:
+        async def seed_legacy_user():
+            async with store.lock:
+                legacy = store.ensure_user_unlocked("u_a1b2c3d4")
+                legacy.balance_mb = 25
+                store.proxies[1] = Proxy(
+                    id=1,
+                    uid=legacy.uid,
+                    name="legacy",
+                    frps_name="u_a1b2c3d4__1",
+                    token="legacy-token",
+                    frps_remote_port=50000,
+                    speed_limit_kbps=128,
+                    traffic_limit_mb=5,
+                )
+
+        asyncio.run(seed_legacy_user())
+        client.cookies.set("uid", "u_a1b2c3d4")
+
+        registered = register_user(client, username="legacy")
+        assert registered["uid"] == "u_a1b2c3d4"
+        assert registered["balance_mb"] == 25
+
+        listed = client.get("/api/proxies")
+        assert listed.status_code == 200
+        assert listed.json()["proxies"][0]["name"] == "legacy"
 
 
 def test_create_proxy_validation_errors():
     with TestClient(app) as client:
-        client.post("/api/user/init", json={})
+        register_user(client)
         client.post("/api/user/recharge", json={})
 
         too_much = client.post("/api/proxies", json={"name": "x", "traffic_mb": 9999})
@@ -68,7 +162,7 @@ def test_create_proxy_validation_errors():
 
 def test_admin_auth_and_operations():
     with TestClient(app) as client:
-        client.post("/api/user/init", json={})
+        register_user(client)
         client.post("/api/user/recharge", json={})
         created = client.post("/api/proxies", json={"name": "demo", "traffic_mb": 1}).json()
         proxy_id = created["proxy"]["id"]
@@ -97,11 +191,12 @@ def test_admin_auth_and_operations():
         users = client.get("/api/admin/users")
         assert users.status_code == 200
         assert users.json()["users"][0]["connection_count"] == 1
+        assert users.json()["users"][0]["username"] == "alice"
 
 
 def test_show_online_only_returns_active_online():
     with TestClient(app) as client:
-        client.post("/api/user/init", json={})
+        register_user(client)
         client.post("/api/user/recharge", json={})
         created = client.post("/api/proxies", json={"name": "demo", "traffic_mb": 1}).json()
         proxy_id = created["proxy"]["id"]
@@ -176,7 +271,7 @@ def test_admin_config_update_rejects_invalid_range():
 
 def test_admin_config_update_rejects_when_proxy_outside_new_range():
     with TestClient(app) as client:
-        client.post("/api/user/init", json={})
+        register_user(client)
         client.post("/api/user/recharge", json={})
         created = client.post("/api/proxies", json={"name": "test", "traffic_mb": 1})
         assert created.status_code == 200

@@ -6,6 +6,7 @@ from typing import Any
 
 from backend.frps_client import FrpsClient
 from backend.models import Proxy, ProxyStatus, store
+from backend.user_persistence import save_registered_users_unlocked
 
 
 class UsagePoller:
@@ -52,20 +53,23 @@ class UsagePoller:
             if info.get("name") is not None
         }
         async with store.lock:
+            users_changed = False
             for proxy in store.proxies.values():
                 if proxy.status == ProxyStatus.DELETED:
                     continue
                 info = by_name.get(proxy.frps_name)
-                _apply_poll_info(proxy, info, self.interval_sec)
+                users_changed = _apply_poll_info(proxy, info, self.interval_sec) or users_changed
                 _apply_stop_rules(proxy)
+            if users_changed:
+                save_registered_users_unlocked(store)
 
 
-def _apply_poll_info(proxy: Proxy, info: dict[str, Any] | None, interval_sec: int) -> None:
+def _apply_poll_info(proxy: Proxy, info: dict[str, Any] | None, interval_sec: int) -> bool:
     if not info:
         proxy.is_online = False
         proxy.current_speed_bps = 0
         proxy.last_frps_total_bytes = None
-        return
+        return False
 
     frps_status = str(info.get("status", ""))
     proxy.is_online = frps_status == "online"
@@ -92,8 +96,14 @@ def _apply_poll_info(proxy: Proxy, info: dict[str, Any] | None, interval_sec: in
             if delta % (1024 * 1024):
                 used_mb += 1
             user.balance_mb = max(0, user.balance_mb - used_mb)
+            user_changed = bool(user.username and user.password_hash)
+        else:
+            user_changed = False
+    else:
+        user_changed = False
 
     proxy.current_speed_bps = int(delta / max(1, interval_sec))
+    return user_changed
 
 
 def _apply_stop_rules(proxy: Proxy) -> None:

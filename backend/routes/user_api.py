@@ -1,12 +1,24 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from backend.auth import get_or_create_user
+from backend.auth import (
+    USER_SESSION_COOKIE,
+    clear_user_session,
+    create_user_session,
+    register_user_unlocked,
+    require_user,
+    user_public_dto,
+    normalize_username,
+    verify_password,
+)
 from backend.deps import port_pool, settings
 from backend.models import Proxy, ProxyStatus, User, new_token, store
 from backend.script_renderer import script_renderer
+from backend.user_persistence import save_registered_users_unlocked
 
 
 def _add_public_url(dto: dict[str, object]) -> dict[str, object]:
@@ -23,23 +35,61 @@ class CreateProxyRequest(BaseModel):
     speed_limit_kbps: int | None = Field(default=None, gt=0)
 
 
+class UserAuthRequest(BaseModel):
+    username: str
+    password: str
+
+
+@router.post("/api/user/register")
+async def register(
+    body: UserAuthRequest,
+    response: Response,
+    legacy_uid: Annotated[str | None, Cookie(alias="uid")] = None,
+) -> dict[str, object]:
+    async with store.lock:
+        user = register_user_unlocked(body.username, body.password, legacy_uid)
+    create_user_session(response, user)
+    return user_public_dto(user)
+
+
+@router.post("/api/user/login")
+async def login(body: UserAuthRequest, response: Response) -> dict[str, object]:
+    username = normalize_username(body.username)
+    async with store.lock:
+        user = store.find_user_by_username_unlocked(username)
+        if user is None or not verify_password(body.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="用户名或密码错误")
+    create_user_session(response, user)
+    return user_public_dto(user)
+
+
+@router.post("/api/user/logout")
+async def logout(
+    request: Request,
+    response: Response,
+) -> dict[str, bool]:
+    clear_user_session(response, request.cookies.get(USER_SESSION_COOKIE))
+    return {"ok": True}
+
+
+@router.get("/api/user/me")
+async def current_user(user: User = Depends(require_user)) -> dict[str, object]:
+    return user_public_dto(user)
+
+
 @router.post("/api/user/init")
-async def init_user(user: User = Depends(get_or_create_user)) -> dict[str, object]:
-    return {
-        "uid": user.uid,
-        "balance_mb": user.balance_mb,
-        "total_recharged_mb": user.total_recharged_mb,
-        "created_at": user.created_at.isoformat(),
-    }
+async def init_user(user: User = Depends(require_user)) -> dict[str, object]:
+    return user_public_dto(user)
 
 
 @router.post("/api/user/recharge")
-async def recharge(user: User = Depends(get_or_create_user)) -> dict[str, int]:
+async def recharge(user: User = Depends(require_user)) -> dict[str, int]:
     async with store.lock:
         current = store.ensure_user_unlocked(user.uid)
         current.balance_mb += settings.free_recharge_amount_mb
         current.total_recharged_mb += settings.free_recharge_amount_mb
         store.add_recharge_unlocked(current.uid, settings.free_recharge_amount_mb)
+        save_registered_users_unlocked(store)
         return {
             "balance_mb": current.balance_mb,
             "total_recharged_mb": current.total_recharged_mb,
@@ -47,7 +97,7 @@ async def recharge(user: User = Depends(get_or_create_user)) -> dict[str, int]:
 
 
 @router.get("/api/proxies")
-async def list_proxies(user: User = Depends(get_or_create_user)) -> dict[str, list[dict[str, object]]]:
+async def list_proxies(user: User = Depends(require_user)) -> dict[str, list[dict[str, object]]]:
     async with store.lock:
         proxies = [
             _add_public_url(store.proxy_to_dto(proxy))
@@ -61,7 +111,7 @@ async def list_proxies(user: User = Depends(get_or_create_user)) -> dict[str, li
 async def create_proxy(
     body: CreateProxyRequest,
     response: Response,
-    user: User = Depends(get_or_create_user),
+    user: User = Depends(require_user),
 ) -> dict[str, object]:
     name = body.name.strip()
     if not name:
@@ -92,15 +142,16 @@ async def create_proxy(
             traffic_limit_mb=body.traffic_mb,
         )
         store.proxies[proxy.id] = proxy
+        current.balance_mb -= body.traffic_mb
         dto = _add_public_url(store.proxy_to_dto(proxy))
         store.proxies[proxy.id] = proxy
+        save_registered_users_unlocked(store)
 
-    response.set_cookie("uid", user.uid, httponly=False, samesite="lax", max_age=60 * 60 * 24 * 365)
     return _proxy_scripts_response(proxy, dto)
 
 
 @router.delete("/api/proxies/{proxy_id}")
-async def delete_proxy(proxy_id: int, user: User = Depends(get_or_create_user)) -> dict[str, bool]:
+async def delete_proxy(proxy_id: int, user: User = Depends(require_user)) -> dict[str, bool]:
     async with store.lock:
         proxy = store.proxies.get(proxy_id)
         if proxy is None or proxy.uid != user.uid:
@@ -114,7 +165,7 @@ async def delete_proxy(proxy_id: int, user: User = Depends(get_or_create_user)) 
 
 
 @router.get("/api/proxies/{proxy_id}/scripts")
-async def get_proxy_scripts(proxy_id: int, user: User = Depends(get_or_create_user)) -> dict[str, object]:
+async def get_proxy_scripts(proxy_id: int, user: User = Depends(require_user)) -> dict[str, object]:
     async with store.lock:
         proxy = store.proxies.get(proxy_id)
         if proxy is None or proxy.uid != user.uid:

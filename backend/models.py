@@ -29,6 +29,8 @@ def new_token() -> str:
 
 class User(BaseModel):
     uid: str
+    username: str | None = None
+    password_hash: str | None = None
     created_at: datetime = Field(default_factory=now_utc)
     balance_mb: int = 0
     total_recharged_mb: int = 0
@@ -85,6 +87,12 @@ class Store:
         user = User(uid=generated_uid)
         self.users[user.uid] = user
         return user
+
+    def find_user_by_username_unlocked(self, username: str) -> User | None:
+        for user in self.users.values():
+            if user.username == username:
+                return user
+        return None
 
     def add_recharge_unlocked(self, uid: str, amount_mb: int) -> RechargeLog:
         self.recharge_id_counter += 1
@@ -161,6 +169,7 @@ class Store:
     def user_to_dto(self, user: User) -> dict[str, Any]:
         return {
             "uid": user.uid,
+            "username": user.username,
             "created_at": user.created_at.isoformat(),
             "balance_mb": user.balance_mb,
             "total_recharged_mb": user.total_recharged_mb,

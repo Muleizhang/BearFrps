@@ -144,6 +144,7 @@
             <table>
               <thead>
                 <tr class="bg-gray-50">
+                  <th>用户名</th>
                   <th>UID</th>
                   <th>注册时间</th>
                   <th>余额</th>
@@ -154,6 +155,7 @@
               <tbody>
                 <template x-for="u in users" :key="u.uid">
                   <tr>
+                    <td class="text-sm font-medium" x-text="u.username || '-'"></td>
                     <td class="font-mono text-sm" x-text="u.uid"></td>
                     <td class="text-sm" x-text="new Date(u.created_at).toLocaleString('zh-CN')"></td>
                     <td class="text-sm font-medium" x-text="u.balance_mb + ' MB'"></td>
@@ -162,7 +164,7 @@
                   </tr>
                 </template>
                 <tr x-show="users.length === 0">
-                  <td colspan="5" class="text-center text-gray-400 py-8">暂无用户</td>
+                  <td colspan="6" class="text-center text-gray-400 py-8">暂无用户</td>
                 </tr>
               </tbody>
             </table>

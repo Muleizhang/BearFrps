@@ -15,6 +15,8 @@ from backend.plugin_handler import router as plugin_router
 from backend.poller import UsagePoller
 from backend.routes import admin_api, show_api, user_api
 from backend.script_renderer import script_renderer
+from backend.user_persistence import load_registered_users_unlocked
+from backend.models import store
 
 
 frps_manager = FrpsManager(settings)
@@ -24,6 +26,8 @@ usage_poller = UsagePoller(FrpsClient(settings), settings.usage_poll_interval_se
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     script_renderer.load()
+    async with store.lock:
+        load_registered_users_unlocked(store)
     await frps_manager.start()
     usage_poller.start()
     try:

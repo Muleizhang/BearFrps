@@ -2,13 +2,25 @@
   window.USE_MOCK = true;
   window.MOCK_SERVER_HOST = "120.46.51.131";
 
-  function uid() {
-    let v = localStorage.getItem("mock_uid");
-    if (!v) {
-      v = "u_" + Math.random().toString(36).slice(2, 10);
-      localStorage.setItem("mock_uid", v);
-    }
-    return v;
+  function makeUid() {
+    return "u_" + Math.random().toString(16).slice(2, 10).padEnd(8, "0").slice(0, 8);
+  }
+
+  function legacyUid() {
+    return localStorage.getItem("mock_uid");
+  }
+
+  function currentUid() {
+    return localStorage.getItem("mock_user_session_uid");
+  }
+
+  function setCurrentUid(uid) {
+    localStorage.setItem("mock_user_session_uid", uid);
+    localStorage.setItem("mock_uid", uid);
+  }
+
+  function clearCurrentUid() {
+    localStorage.removeItem("mock_user_session_uid");
   }
 
   function makeToken() {
@@ -27,20 +39,37 @@
   }
   function saveUsers(obj) { localStorage.setItem("mock_users", JSON.stringify(obj)); }
 
-  function ensureUser() {
-    let users = loadUsers();
-    let id = uid();
-    if (!users[id]) {
-      users[id] = { uid: id, created_at: new Date().toISOString(), balance_mb: 0, total_recharged_mb: 0, connection_count: 0 };
-      saveUsers(users);
-    }
-    return users[id];
+  function normalizeUsername(username) {
+    return String(username || "").trim().toLowerCase();
+  }
+
+  function publicUser(user) {
+    return {
+      uid: user.uid,
+      username: user.username,
+      created_at: user.created_at,
+      balance_mb: user.balance_mb || 0,
+      total_recharged_mb: user.total_recharged_mb || 0,
+      connection_count: user.connection_count || 0
+    };
+  }
+
+  function requireUser() {
+    let id = currentUid();
+    if (!id) return null;
+    let user = loadUsers()[id];
+    if (!user || !user.username) return null;
+    return user;
+  }
+
+  function usernameExists(users, username) {
+    return Object.values(users).some(function (u) { return u.username === username; });
   }
 
   function nextPort() {
     let proxies = loadProxies();
     let used = new Set(proxies.map(function (p) { return p.frps_remote_port; }));
-    for (let i = 50000; i <= 50100; i++) {
+    for (let i = mockAllocatableStart; i <= mockAllocatableEnd; i++) {
       if (!used.has(i)) return i;
     }
     return null;
@@ -145,39 +174,93 @@
   window.statusBadge = statusBadge;
 
   var routes = {
+    "POST /api/user/register": function (body) {
+      var username = normalizeUsername(body && body.username);
+      var password = String((body && body.password) || "");
+      if (!/^[a-z0-9_]{3,32}$/.test(username)) {
+        return { status: 400, body: { detail: "用户名需为 3-32 位字母、数字或下划线" } };
+      }
+      if (password.length < 8 || password.length > 128) {
+        return { status: 400, body: { detail: "密码长度需为 8-128 位" } };
+      }
+
+      var users = loadUsers();
+      if (usernameExists(users, username)) {
+        return { status: 400, body: { detail: "用户名已存在" } };
+      }
+
+      var id = legacyUid();
+      var user = id ? users[id] : null;
+      if (!user || user.username) {
+        id = makeUid();
+        while (users[id]) id = makeUid();
+        user = { uid: id, created_at: new Date().toISOString(), balance_mb: 0, total_recharged_mb: 0, connection_count: 0 };
+      }
+      user.username = username;
+      user.password = password;
+      users[id] = user;
+      saveUsers(users);
+      setCurrentUid(id);
+      return { status: 200, body: publicUser(user) };
+    },
+
+    "POST /api/user/login": function (body) {
+      var username = normalizeUsername(body && body.username);
+      var password = String((body && body.password) || "");
+      var users = loadUsers();
+      var user = Object.values(users).find(function (u) {
+        return u.username === username && u.password === password;
+      });
+      if (!user) return { status: 401, body: { detail: "用户名或密码错误" } };
+      setCurrentUid(user.uid);
+      return { status: 200, body: publicUser(user) };
+    },
+
+    "POST /api/user/logout": function () {
+      clearCurrentUid();
+      return { status: 200, body: { ok: true } };
+    },
+
+    "GET /api/user/me": function () {
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
+      return { status: 200, body: publicUser(user) };
+    },
+
     "POST /api/user/init": function () {
-      var user = ensureUser();
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
       var proxies = loadProxies().filter(function (p) { return p.uid === user.uid && p.status !== "deleted"; });
       user.connection_count = proxies.length;
-      return { status: 200, body: user };
+      return { status: 200, body: publicUser(user) };
     },
 
     "POST /api/user/recharge": function () {
       var users = loadUsers();
-      var id = uid();
-      var user = users[id];
-      if (!user) return { status: 404, body: { detail: "User not found" } };
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
       user.balance_mb += 100;
       user.total_recharged_mb += 100;
+      users[user.uid] = user;
       saveUsers(users);
       return { status: 200, body: { balance_mb: user.balance_mb, total_recharged_mb: user.total_recharged_mb } };
     },
 
     "GET /api/proxies": function () {
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
       refreshOnlineStatus();
-      var id = uid();
-      var proxies = loadProxies().filter(function (p) { return p.uid === id && p.status !== "deleted"; });
+      var proxies = loadProxies().filter(function (p) { return p.uid === user.uid && p.status !== "deleted"; });
       return { status: 200, body: { proxies: proxies } };
     },
 
     "POST /api/proxies": function (body) {
       var users = loadUsers();
-      var id = uid();
-      var user = users[id];
-      if (!user) return { status: 404, body: { detail: "User not found" } };
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
 
       var proxies = loadProxies();
-      var mine = proxies.filter(function (p) { return p.uid === id && p.status !== "deleted"; });
+      var mine = proxies.filter(function (p) { return p.uid === user.uid && p.status !== "deleted"; });
 
       if (mine.length >= 3) return { status: 400, body: { detail: "超过最大连接数" } };
       if (body.traffic_mb > user.balance_mb) return { status: 400, body: { detail: "余额不足" } };
@@ -187,11 +270,12 @@
       if (port === null) return { status: 400, body: { detail: "端口池满" } };
 
       user.balance_mb -= body.traffic_mb;
+      users[user.uid] = user;
       saveUsers(users);
 
       var proxy = {
         id: Date.now(),
-        uid: id,
+        uid: user.uid,
         name: body.name,
         token: makeToken(),
         frps_remote_port: port,
@@ -220,9 +304,11 @@
     },
 
     "DELETE /api/proxies/": function (pathParts) {
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
       var idStr = pathParts[0];
       var proxies = loadProxies();
-      var idx = proxies.findIndex(function (p) { return String(p.id) === idStr && p.uid === uid(); });
+      var idx = proxies.findIndex(function (p) { return String(p.id) === idStr && p.uid === user.uid; });
       if (idx === -1) return { status: 404, body: { detail: "Not found" } };
       proxies.splice(idx, 1);
       saveProxies(proxies);
@@ -230,9 +316,11 @@
     },
 
     "GET /api/proxies/": function (pathParts) {
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
       var idStr = pathParts[0];
       var proxies = loadProxies();
-      var proxy = proxies.find(function (p) { return String(p.id) === idStr && p.uid === uid(); });
+      var proxy = proxies.find(function (p) { return String(p.id) === idStr && p.uid === user.uid; });
       if (!proxy) return { status: 404, body: { detail: "Not found" } };
       return {
         status: 200,
@@ -269,7 +357,7 @@
       var proxies = loadProxies();
       var arr = Object.values(users).map(function (u) {
         var count = proxies.filter(function (p) { return p.uid === u.uid && p.status !== "deleted"; }).length;
-        return Object.assign({}, u, { connection_count: count });
+        return Object.assign(publicUser(u), { connection_count: count });
       });
       return { status: 200, body: { users: arr } };
     },
@@ -371,6 +459,18 @@
     var urlObj = new URL(url, window.location.origin);
     var path = urlObj.pathname;
 
+    if (method === "POST" && path === "/api/user/register") {
+      return mockResponse(routes["POST /api/user/register"](body));
+    }
+    if (method === "POST" && path === "/api/user/login") {
+      return mockResponse(routes["POST /api/user/login"](body));
+    }
+    if (method === "POST" && path === "/api/user/logout") {
+      return mockResponse(routes["POST /api/user/logout"]());
+    }
+    if (method === "GET" && path === "/api/user/me") {
+      return mockResponse(routes["GET /api/user/me"]());
+    }
     if (method === "POST" && path === "/api/user/init") {
       return mockResponse(routes["POST /api/user/init"]());
     }
