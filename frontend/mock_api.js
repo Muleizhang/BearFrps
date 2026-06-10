@@ -45,21 +45,64 @@
   }
 
   function publicUser(user) {
+    ensureFrpcToken(user);
     return {
       uid: user.uid,
       username: user.username,
       created_at: user.created_at,
+      frpc_token_version: user.frpc_token_version,
+      frpc_token_rotated_at: user.frpc_token_rotated_at,
       balance_mb: user.balance_mb || 0,
       total_recharged_mb: user.total_recharged_mb || 0,
       connection_count: user.connection_count || 0
     };
   }
 
+  function ensureFrpcToken(user) {
+    if (!user.frpc_token) user.frpc_token = makeToken();
+    if (!user.frpc_token_version) user.frpc_token_version = 1;
+    if (!user.frpc_token_rotated_at) user.frpc_token_rotated_at = user.created_at || new Date().toISOString();
+    return user;
+  }
+
+  function frpcTokenBody(user) {
+    ensureFrpcToken(user);
+    return {
+      token: user.frpc_token,
+      version: user.frpc_token_version,
+      rotated_at: user.frpc_token_rotated_at
+    };
+  }
+
+  function tokenForProxy(proxy) {
+    var users = loadUsers();
+    var user = proxy && proxy.uid ? users[proxy.uid] : null;
+    if (user) {
+      ensureFrpcToken(user);
+      users[user.uid] = user;
+      saveUsers(users);
+      return user.frpc_token;
+    }
+    return (proxy && proxy.token) || makeToken();
+  }
+
+  function syncProxyTokens(uid, token) {
+    var proxies = loadProxies();
+    proxies.forEach(function (proxy) {
+      if (proxy.uid === uid && proxy.status !== "deleted") proxy.token = token;
+    });
+    saveProxies(proxies);
+  }
+
   function requireUser() {
     let id = currentUid();
     if (!id) return null;
-    let user = loadUsers()[id];
+    let users = loadUsers();
+    let user = users[id];
     if (!user || !user.username) return null;
+    ensureFrpcToken(user);
+    users[id] = user;
+    saveUsers(users);
     return user;
   }
 
@@ -312,13 +355,15 @@
 
   function makeFrpcConfig(proxy) {
     proxy = withPublicUrl(proxy);
+    var token = tokenForProxy(proxy);
     var lines = [
       'serverAddr = "' + window.MOCK_SERVER_HOST + '"',
       'serverPort = 7000',
       '',
       'auth.method = "token"',
       'auth.token = "bearfrps-internal"',
-      'metadatas.token = "' + proxy.token + '"',
+      'metadatas.token = "' + tomlString(token) + '"',
+      'metadatas.uid = "' + tomlString(proxy.uid || "") + '"',
       ''
     ];
     if (proxy.proxy_type === "http") {
@@ -368,7 +413,8 @@
   function makeVisitorConfig(proxy) {
     proxy = withPublicUrl(proxy);
     if (proxy.proxy_type !== "xtcp") return makeFrpcConfig(proxy);
-    var secret = proxy.p2p_secret_key || proxy.token;
+    var token = tokenForProxy(proxy);
+    var secret = proxy.p2p_secret_key || token;
     var fallbackName = proxy.p2p_fallback_name || ((proxy.frps_name || proxy.name) + "__fallback");
     var visitorName = (proxy.frps_name || proxy.name) + "__visitor";
     var fallbackVisitorName = fallbackName + "__visitor";
@@ -378,7 +424,8 @@
       '',
       'auth.method = "token"',
       'auth.token = "bearfrps-internal"',
-      'metadatas.token = "' + proxy.token + '"',
+      'metadatas.token = "' + tomlString(token) + '"',
+      'metadatas.uid = "' + tomlString(proxy.uid || "") + '"',
       '',
       '[[visitors]]',
       'name = "' + visitorName + '"',
@@ -555,6 +602,7 @@
       }
       user.username = username;
       user.password = password;
+      ensureFrpcToken(user);
       users[id] = user;
       saveUsers(users);
       setCurrentUid(id);
@@ -603,6 +651,25 @@
       return { status: 200, body: { balance_mb: user.balance_mb, total_recharged_mb: user.total_recharged_mb } };
     },
 
+    "GET /api/user/frpc-token": function () {
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
+      return { status: 200, body: frpcTokenBody(user) };
+    },
+
+    "POST /api/user/frpc-token/rotate": function () {
+      var users = loadUsers();
+      var user = requireUser();
+      if (!user) return { status: 401, body: { detail: "user login required" } };
+      user.frpc_token = makeToken();
+      user.frpc_token_version = Number(user.frpc_token_version || 1) + 1;
+      user.frpc_token_rotated_at = new Date().toISOString();
+      users[user.uid] = user;
+      saveUsers(users);
+      syncProxyTokens(user.uid, user.frpc_token);
+      return { status: 200, body: frpcTokenBody(user) };
+    },
+
     "GET /api/proxies": function () {
       var user = requireUser();
       if (!user) return { status: 401, body: { detail: "user login required" } };
@@ -620,6 +687,7 @@
 
       var proxies = loadProxies();
       var mine = proxies.filter(function (p) { return p.uid === user.uid && p.status !== "deleted"; });
+      ensureFrpcToken(user);
       var proxyType = (body.proxy_type || "tcp").toLowerCase();
       var name = String(body.name || "").trim();
       var localIp = String(body.local_ip || "127.0.0.1").trim();
@@ -678,7 +746,7 @@
         uid: user.uid,
         name: name,
         frps_name: frpsName,
-        token: makeToken(),
+        token: user.frpc_token,
         proxy_type: proxyType,
         frps_remote_port: port,
         local_ip: localIp,
@@ -917,6 +985,12 @@
     }
     if (method === "POST" && path === "/api/user/recharge") {
       return mockResponse(routes["POST /api/user/recharge"]());
+    }
+    if (method === "GET" && path === "/api/user/frpc-token") {
+      return mockResponse(routes["GET /api/user/frpc-token"]());
+    }
+    if (method === "POST" && path === "/api/user/frpc-token/rotate") {
+      return mockResponse(routes["POST /api/user/frpc-token/rotate"]());
     }
     if (method === "GET" && path === "/api/proxies") {
       return mockResponse(routes["GET /api/proxies"]());

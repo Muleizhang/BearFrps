@@ -17,7 +17,16 @@ from backend.auth import (
     verify_password,
 )
 from backend.deps import port_pool, settings
-from backend.models import Proxy, ProxyStatus, ProxyType, TcpMapping, User, new_token, store
+from backend.models import (
+    Proxy,
+    ProxyStatus,
+    ProxyType,
+    TcpMapping,
+    User,
+    new_token,
+    now_utc,
+    store,
+)
 from backend.script_renderer import script_renderer
 from backend.user_persistence import save_registered_users_unlocked
 
@@ -156,6 +165,26 @@ async def recharge(user: User = Depends(require_user)) -> dict[str, int]:
         }
 
 
+@router.get("/api/user/frpc-token")
+async def get_frpc_token(user: User = Depends(require_user)) -> dict[str, object]:
+    async with store.lock:
+        current = store.ensure_user_unlocked(user.uid)
+        store.sync_user_proxy_tokens_unlocked(current.uid)
+        return _frpc_token_response(current)
+
+
+@router.post("/api/user/frpc-token/rotate")
+async def rotate_frpc_token(user: User = Depends(require_user)) -> dict[str, object]:
+    async with store.lock:
+        current = store.ensure_user_unlocked(user.uid)
+        current.frpc_token = new_token()
+        current.frpc_token_version += 1
+        current.frpc_token_rotated_at = now_utc()
+        store.sync_user_proxy_tokens_unlocked(current.uid)
+        save_registered_users_unlocked(store)
+        return _frpc_token_response(current)
+
+
 @router.get("/api/proxies")
 async def list_proxies(user: User = Depends(require_user)) -> dict[str, list[dict[str, object]]]:
     async with store.lock:
@@ -223,7 +252,7 @@ async def create_proxy(
             uid=current.uid,
             name=name,
             frps_name=frps_name,
-            token=new_token(),
+            token=current.frpc_token,
             proxy_type=body.proxy_type,
             frps_remote_port=remote_port,
             local_ip=local_ip,
@@ -288,6 +317,14 @@ def _proxy_scripts_response(proxy: Proxy, dto: dict[str, object]) -> dict[str, o
         "frpc_config": frpc_config,
         "frpc_configs": script_renderer.render_frpc_configs(proxy, settings),
         "scripts": script_renderer.render_bundle(proxy, settings),
+    }
+
+
+def _frpc_token_response(user: User) -> dict[str, object]:
+    return {
+        "token": user.frpc_token,
+        "version": user.frpc_token_version,
+        "rotated_at": user.frpc_token_rotated_at.isoformat(),
     }
 
 

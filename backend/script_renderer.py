@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from backend.config import Settings, ROOT_DIR
-from backend.models import Proxy, ProxyType
+from backend.models import Proxy, ProxyType, store
 
 
 TEMPLATE_FILES = {
@@ -78,7 +78,7 @@ class ScriptRenderer:
                     ]
                 )
         elif proxy.proxy_type == ProxyType.XTCP:
-            secret_key = proxy.p2p_secret_key or proxy.token
+            secret_key = proxy.p2p_secret_key or _effective_frpc_token(proxy)
             fallback_name = proxy.p2p_fallback_name or f"{proxy.frps_name}__fallback"
             for name, proxy_type in (
                 (proxy.frps_name, "xtcp"),
@@ -141,7 +141,7 @@ class ScriptRenderer:
     def render_frpc_visitor_config(self, proxy: Proxy, settings: Settings) -> str:
         if proxy.proxy_type != ProxyType.XTCP:
             return self.render_frpc_config(proxy, settings)
-        secret_key = proxy.p2p_secret_key or proxy.token
+        secret_key = proxy.p2p_secret_key or _effective_frpc_token(proxy)
         fallback_name = proxy.p2p_fallback_name or f"{proxy.frps_name}__fallback"
         xtcp_visitor_name = f"{proxy.frps_name}__visitor"
         stcp_visitor_name = f"{fallback_name}__visitor"
@@ -174,13 +174,15 @@ class ScriptRenderer:
         return "\n".join(lines)
 
     def _common_frpc_lines(self, proxy: Proxy, settings: Settings) -> list[str]:
+        token = _effective_frpc_token(proxy)
         return [
             f'serverAddr = "{_toml_str(settings.server_public_host)}"\n'
             f"serverPort = {settings.frps_bind_port}",
             "",
             'auth.method = "token"\n'
             f'auth.token = "{_toml_str(settings.frps_auth_token)}"\n'
-            f'metadatas.token = "{_toml_str(proxy.token)}"',
+            f'metadatas.token = "{_toml_str(token)}"\n'
+            f'metadatas.uid = "{_toml_str(proxy.uid)}"',
             "",
         ]
 
@@ -196,7 +198,7 @@ class ScriptRenderer:
             "{{SERVER_HOST}}": settings.server_public_host,
             "{{SERVER_PORT}}": str(settings.frps_bind_port),
             "{{FRPS_AUTH_TOKEN}}": settings.frps_auth_token,
-            "{{TOKEN}}": proxy.token,
+            "{{TOKEN}}": _effective_frpc_token(proxy),
             "{{PROXY_NAME}}": proxy.frps_name,
             "{{REMOTE_PORT}}": str(proxy.frps_remote_port or ""),
             "{{FRP_VERSION}}": settings.frps_version,
@@ -231,6 +233,10 @@ class ScriptRenderer:
 
 def _toml_str(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _effective_frpc_token(proxy: Proxy) -> str:
+    return store.user_frpc_token_unlocked(proxy.uid) or proxy.token
 
 
 def _toml_bool(value: bool) -> str:

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Request
 
 from backend.deps import settings
-from backend.models import Proxy, ProxyStatus, ProxyType, store
+from backend.models import Proxy, ProxyStatus, ProxyType, User, store
 
 
 router = APIRouter()
@@ -32,24 +33,27 @@ async def frps_plugin(request: Request) -> dict[str, Any]:
 
 
 async def _handle_login(content: dict[str, Any]) -> dict[str, Any]:
-    token = _extract_token(content)
     async with store.lock:
-        proxy = store.find_proxy_by_token_unlocked(token)
-        if proxy is None:
-            proxy = _find_proxy_by_privilege_key_unlocked(content)
-        reason = _reject_reason_unlocked(proxy)
+        user = _find_login_user_unlocked(content)
+        reason = _reject_login_reason_unlocked(user)
         if reason:
             return _reject(reason)
-        return _allow()
+        assert user is not None
+        _rewrite_login_content(content, user)
+        return _modify(content)
 
 
 async def _handle_new_proxy(content: dict[str, Any]) -> dict[str, Any]:
-    token = _extract_token(content)
     remote_port = _as_int(content.get("remote_port", content.get("remotePort")))
     proxy_name = content.get("proxy_name", content.get("proxyName"))
     proxy_type = str(content.get("proxy_type", content.get("proxyType", ""))).lower()
     async with store.lock:
-        proxy = store.find_proxy_by_token_unlocked(token)
+        user, reason = _authenticated_user_unlocked(content)
+        if reason:
+            return _reject(reason)
+        proxy = store.find_proxy_by_frps_name_unlocked(str(proxy_name))
+        if proxy is not None and user is not None and proxy.uid != user.uid:
+            return _reject("proxy owner mismatch")
         reason = _reject_reason_unlocked(proxy)
         if reason:
             return _reject(reason)
@@ -119,14 +123,19 @@ async def _handle_close_proxy(content: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _handle_ping(content: dict[str, Any]) -> dict[str, Any]:
-    token = _extract_token(content)
     async with store.lock:
-        proxy = store.find_proxy_by_token_unlocked(token)
-        reason = _reject_reason_unlocked(proxy)
+        user, reason = _authenticated_user_unlocked(content)
         if reason:
             return _reject(reason)
-        if proxy:
-            proxy.last_seen_at = datetime.now(UTC)
+        assert user is not None
+        if user.balance_mb <= 0:
+            return _reject("insufficient balance")
+        if not store.has_active_proxy_unlocked(user.uid):
+            return _reject("no active proxy")
+        now = datetime.now(UTC)
+        for proxy in store.proxies.values():
+            if proxy.uid == user.uid and proxy.status == ProxyStatus.ACTIVE:
+                proxy.last_seen_at = now
         return _allow()
 
 
@@ -148,6 +157,61 @@ def _extract_token(content: dict[str, Any]) -> str | None:
     if content.get("token"):
         return str(content["token"])
     return None
+
+
+def _find_login_user_unlocked(content: dict[str, Any]) -> User | None:
+    token = _extract_token(content)
+    if token:
+        user = _find_user_by_raw_token_unlocked(token)
+        if user is not None:
+            return user
+
+    user = _find_user_by_privilege_key_unlocked(content)
+    if user is not None:
+        return user
+    return None
+
+
+def _find_user_by_raw_token_unlocked(token: str) -> User | None:
+    for user in store.users.values():
+        if hmac.compare_digest(user.frpc_token, token):
+            return user
+
+    # Legacy compatibility for configs generated before user-level tokens existed.
+    for proxy in store.proxies.values():
+        if proxy.status != ProxyStatus.DELETED and hmac.compare_digest(proxy.token, token):
+            return store.users.get(proxy.uid)
+    return None
+
+
+def _authenticated_user_unlocked(content: dict[str, Any]) -> tuple[User | None, str | None]:
+    uid, token_version = _extract_authenticated_user(content)
+    if not uid:
+        token = _extract_token(content)
+        if token:
+            user = _find_user_by_raw_token_unlocked(token)
+            if user is not None:
+                return user, None
+        return None, "invalid token"
+
+    user = store.users.get(uid)
+    if user is None:
+        return None, "user not found"
+    if str(user.frpc_token_version) != str(token_version):
+        return None, "token has been rotated"
+    return user, None
+
+
+def _extract_authenticated_user(content: dict[str, Any]) -> tuple[str | None, str | None]:
+    user = content.get("user")
+    if isinstance(user, dict):
+        metas = user.get("metas") if isinstance(user.get("metas"), dict) else {}
+        uid = user.get("user") or metas.get("uid")
+        token_version = metas.get("token_version")
+        return (str(uid) if uid else None, str(token_version) if token_version else None)
+    if user:
+        return str(user), None
+    return None, None
 
 
 def _extract_subdomain(content: dict[str, Any]) -> str | None:
@@ -192,7 +256,17 @@ def _reject_reason_unlocked(proxy: Proxy | None) -> str | None:
     return None
 
 
-def _find_proxy_by_privilege_key_unlocked(content: dict[str, Any]) -> Proxy | None:
+def _reject_login_reason_unlocked(user: User | None) -> str | None:
+    if user is None:
+        return "invalid token"
+    if user.balance_mb <= 0:
+        return "insufficient balance"
+    if not store.has_active_proxy_unlocked(user.uid):
+        return "no active proxy"
+    return None
+
+
+def _find_user_by_privilege_key_unlocked(content: dict[str, Any]) -> User | None:
     privilege_key = content.get("privilege_key")
     timestamp = content.get("timestamp")
     if not privilege_key:
@@ -201,12 +275,30 @@ def _find_proxy_by_privilege_key_unlocked(content: dict[str, Any]) -> Proxy | No
         ts = int(timestamp)
     except (TypeError, ValueError):
         return None
+    for user in store.users.values():
+        if hmac.compare_digest(_auth_key(user.frpc_token, ts), str(privilege_key)):
+            return user
+
+    # Legacy compatibility for per-proxy tokens from older generated configs.
     for proxy in store.proxies.values():
-        raw = f"{proxy.token}{ts}".encode("utf-8")
-        candidate = hashlib.md5(raw, usedforsecurity=False).hexdigest()
-        if candidate == privilege_key:
-            return proxy
+        if proxy.status == ProxyStatus.DELETED:
+            continue
+        if hmac.compare_digest(_auth_key(proxy.token, ts), str(privilege_key)):
+            return store.users.get(proxy.uid)
     return None
+
+
+def _rewrite_login_content(content: dict[str, Any], user: User) -> None:
+    content["user"] = user.uid
+    content["metas"] = {
+        "uid": user.uid,
+        "token_version": str(user.frpc_token_version),
+    }
+
+
+def _auth_key(token: str, timestamp: int) -> str:
+    raw = f"{token}{timestamp}".encode("utf-8")
+    return hashlib.md5(raw, usedforsecurity=False).hexdigest()
 
 
 def _allow() -> dict[str, Any]:

@@ -36,6 +36,9 @@ def test_user_lifecycle_and_scripts():
         recharge = client.post("/api/user/recharge", json={})
         assert recharge.status_code == 200
         assert recharge.json()["balance_mb"] == settings.free_recharge_amount_mb
+        token_response = client.get("/api/user/frpc-token")
+        assert token_response.status_code == 200
+        frpc_token = token_response.json()["token"]
 
         created = client.post(
             "/api/proxies",
@@ -47,7 +50,10 @@ def test_user_lifecycle_and_scripts():
         assert body["proxy"]["frps_remote_port"] == settings.allocatable_port_range_start
         assert body["proxy"]["tcp_mappings"][0]["remote_port"] == settings.allocatable_port_range_start
         assert body["proxy"]["public_urls"] == [body["proxy"]["public_url"]]
-        assert "metadatas.token" in body["frpc_config"]
+        assert body["proxy"]["token"] == frpc_token
+        assert f'auth.token = "{settings.frps_auth_token}"' in body["frpc_config"]
+        assert f'metadatas.token = "{frpc_token}"' in body["frpc_config"]
+        assert f'metadatas.uid = "{uid}"' in body["frpc_config"]
         assert body["scripts"]["frpc"]["linux"]
         assert client.get("/api/user/me").json()["balance_mb"] == settings.free_recharge_amount_mb - 10
 
@@ -58,6 +64,15 @@ def test_user_lifecycle_and_scripts():
         scripts = client.get(f"/api/proxies/{body['proxy']['id']}/scripts")
         assert scripts.status_code == 200
         assert scripts.json()["proxy"]["id"] == body["proxy"]["id"]
+
+        rotated = client.post("/api/user/frpc-token/rotate", json={})
+        assert rotated.status_code == 200
+        assert rotated.json()["token"] != frpc_token
+        assert rotated.json()["version"] == token_response.json()["version"] + 1
+        rotated_scripts = client.get(f"/api/proxies/{body['proxy']['id']}/scripts")
+        assert rotated_scripts.status_code == 200
+        assert f'metadatas.token = "{rotated.json()["token"]}"' in rotated_scripts.json()["frpc_config"]
+        assert frpc_token not in rotated_scripts.json()["frpc_config"]
 
         deleted = client.delete(f"/api/proxies/{body['proxy']['id']}")
         assert deleted.status_code == 200
@@ -519,6 +534,7 @@ def test_user_auth_login_logout_and_persistence():
                 load_registered_users_unlocked(store)
 
         asyncio.run(reload_users())
+        assert store.users[registered["uid"]].frpc_token
         login_after_reload = client.post(
             "/api/user/login",
             json={"username": "persisted", "password": "password123"},

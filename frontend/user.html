@@ -69,6 +69,23 @@
       <button class="btn btn-primary btn-sm" @click="openCreateModal = true; createResult = null; createError = ''">+ 申请新连接</button>
     </div>
 
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+      <div class="min-w-0">
+        <div class="text-xs font-medium text-gray-500 mb-1">FRPC 连接 Token</div>
+        <div class="font-mono text-sm text-gray-800 select-all truncate" x-text="frpcToken || '-'"></div>
+        <div class="text-xs text-gray-500 mt-1">
+          <span>版本 </span><span x-text="frpcTokenVersion || '-'"></span>
+          <span class="mx-1">·</span>
+          <span x-text="formatTokenTime(frpcTokenRotatedAt)"></span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button class="btn btn-secondary btn-sm" @click="copyText(frpcToken)" :disabled="!frpcToken">复制</button>
+        <button class="btn btn-danger btn-sm" @click="rotateFrpcToken()" :disabled="tokenLoading"
+                x-text="tokenLoading ? '更换中...' : '更换 Token'"></button>
+      </div>
+    </div>
+
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
       <table>
         <thead>
@@ -508,6 +525,10 @@
         uid: '',
         balance_mb: 0,
         total_recharged_mb: 0,
+        frpcToken: '',
+        frpcTokenVersion: null,
+        frpcTokenRotatedAt: '',
+        tokenLoading: false,
         proxies: [],
         authMode: 'login',
         authForm: { username: '', password: '' },
@@ -562,6 +583,9 @@
           this.uid = '';
           this.balance_mb = 0;
           this.total_recharged_mb = 0;
+          this.frpcToken = '';
+          this.frpcTokenVersion = null;
+          this.frpcTokenRotatedAt = '';
           this.proxies = [];
           this.openCreateModal = false;
           this.openScriptModal = false;
@@ -586,6 +610,7 @@
             if (!res.ok) { this.resetUserState(); return; }
             const data = await res.json();
             this.applyUser(data);
+            await this.loadFrpcToken();
             await this.loadProxies();
             this.startPolling();
           } finally {
@@ -610,6 +635,7 @@
             if (!res.ok) { this.authError = extractDetail(data) || '操作失败'; return; }
             this.applyUser(data);
             this.authForm.password = '';
+            await this.loadFrpcToken();
             await this.loadProxies();
             this.startPolling();
             toast(this.authMode === 'login' ? '登录成功' : '注册成功');
@@ -638,6 +664,41 @@
           if (this.handleUnauthorized(res)) return;
           const data = await res.json();
           this.applyUser(data);
+          await this.loadFrpcToken();
+        },
+
+        applyFrpcToken(data) {
+          this.frpcToken = data.token || '';
+          this.frpcTokenVersion = data.version || null;
+          this.frpcTokenRotatedAt = data.rotated_at || '';
+        },
+
+        async loadFrpcToken() {
+          const res = await fetch('/api/user/frpc-token', { credentials: 'same-origin' });
+          if (this.handleUnauthorized(res)) return;
+          const data = await res.json();
+          if (res.ok) this.applyFrpcToken(data);
+        },
+
+        async rotateFrpcToken() {
+          if (!confirm('更换 Token 后，旧 frpc 连接会失效。确定继续？')) return;
+          this.tokenLoading = true;
+          try {
+            const res = await fetch('/api/user/frpc-token/rotate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: '{}'
+            });
+            if (this.handleUnauthorized(res)) return;
+            const data = await res.json();
+            if (!res.ok) { toast(extractDetail(data) || '更换失败'); return; }
+            this.applyFrpcToken(data);
+            await this.loadProxies();
+            toast('Token 已更换');
+          } finally {
+            this.tokenLoading = false;
+          }
         },
 
         async loadProxies() {
@@ -983,6 +1044,12 @@
           if (!p || !p.public_url) return '';
           try { return new URL(p.public_url).hostname; }
           catch (e) { return ''; }
+        },
+
+        formatTokenTime(value) {
+          if (!value) return '-';
+          try { return new Date(value).toLocaleString(); }
+          catch (e) { return value; }
         }
       };
     }

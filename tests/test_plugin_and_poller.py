@@ -3,14 +3,26 @@ from __future__ import annotations
 import asyncio
 
 from backend.models import Proxy, ProxyStatus, ProxyType, TcpMapping, User, store
-from backend.plugin_handler import _handle_close_proxy, _handle_login, _handle_new_proxy
+from backend.plugin_handler import _auth_key, _handle_close_proxy, _handle_login, _handle_new_proxy, _handle_ping
 from backend.poller import UsagePoller
+
+
+def login_content(token: str, timestamp: int = 123) -> dict[str, object]:
+    return {"timestamp": timestamp, "privilege_key": _auth_key(token, timestamp)}
+
+
+def plugin_user(uid: str = "u_a1b2c3d4", version: int = 1) -> dict[str, object]:
+    return {"user": uid, "metas": {"uid": uid, "token_version": str(version)}}
 
 
 def test_plugin_accepts_user_token_and_rewrites_frps_auth():
     async def run():
         async with store.lock:
-            store.users["u_a1b2c3d4"] = User(uid="u_a1b2c3d4", balance_mb=10)
+            store.users["u_a1b2c3d4"] = User(
+                uid="u_a1b2c3d4",
+                balance_mb=10,
+                frpc_token="user-token",
+            )
             store.proxies[1] = Proxy(
                 id=1,
                 uid="u_a1b2c3d4",
@@ -23,15 +35,16 @@ def test_plugin_accepts_user_token_and_rewrites_frps_auth():
                 traffic_limit_mb=10,
             )
 
-        login = await _handle_login(
-            {"timestamp": 123, "metas": {"token": "user-token"}, "privilege_key": "old"}
-        )
+        login = await _handle_login({**login_content("bearfrps-internal"), "metas": {"token": "user-token"}})
         assert login["reject"] is False
-        assert login["unchange"] is True
+        assert login["unchange"] is False
+        assert login["content"]["user"] == "u_a1b2c3d4"
+        assert login["content"]["metas"]["token_version"] == "1"
+        assert login["content"]["privilege_key"] == _auth_key("bearfrps-internal", 123)
 
         new_proxy = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "user-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1",
                 "remote_port": 50000,
             }
@@ -46,7 +59,11 @@ def test_plugin_accepts_user_token_and_rewrites_frps_auth():
 def test_plugin_rejects_wrong_port_or_stopped_proxy():
     async def run():
         async with store.lock:
-            store.users["u_a1b2c3d4"] = User(uid="u_a1b2c3d4", balance_mb=10)
+            store.users["u_a1b2c3d4"] = User(
+                uid="u_a1b2c3d4",
+                balance_mb=10,
+                frpc_token="user-token",
+            )
             store.proxies[1] = Proxy(
                 id=1,
                 uid="u_a1b2c3d4",
@@ -60,7 +77,7 @@ def test_plugin_rejects_wrong_port_or_stopped_proxy():
 
         wrong_port = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "user-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1",
                 "remote_port": 50001,
             }
@@ -69,8 +86,51 @@ def test_plugin_rejects_wrong_port_or_stopped_proxy():
 
         async with store.lock:
             store.proxies[1].status = ProxyStatus.STOPPED_BY_ADMIN
-        stopped = await _handle_login({"metas": {"token": "user-token"}})
+        stopped = await _handle_login({**login_content("bearfrps-internal"), "metas": {"token": "user-token"}})
         assert stopped["reject"] is True
+
+    asyncio.run(run())
+
+
+def test_plugin_rejects_rotated_token_version():
+    async def run():
+        async with store.lock:
+            store.users["u_a1b2c3d4"] = User(
+                uid="u_a1b2c3d4",
+                balance_mb=10,
+                frpc_token="old-token",
+                frpc_token_version=1,
+            )
+            store.proxies[1] = Proxy(
+                id=1,
+                uid="u_a1b2c3d4",
+                name="demo",
+                frps_name="u_a1b2c3d4__1",
+                token="old-token",
+                frps_remote_port=50000,
+                speed_limit_kbps=128,
+                traffic_limit_mb=10,
+            )
+
+        old_login = await _handle_login({**login_content("bearfrps-internal"), "metas": {"token": "old-token"}})
+        assert old_login["reject"] is False
+
+        async with store.lock:
+            user = store.users["u_a1b2c3d4"]
+            user.frpc_token = "new-token"
+            user.frpc_token_version = 2
+            store.sync_user_proxy_tokens_unlocked(user.uid)
+
+        stale_ping = await _handle_ping({"user": plugin_user(version=1)})
+        assert stale_ping["reject"] is True
+        assert stale_ping["reject_reason"] == "token has been rotated"
+
+        stale_login = await _handle_login({**login_content("bearfrps-internal"), "metas": {"token": "old-token"}})
+        assert stale_login["reject"] is True
+
+        fresh_login = await _handle_login({**login_content("bearfrps-internal"), "metas": {"token": "new-token"}})
+        assert fresh_login["reject"] is False
+        assert fresh_login["content"]["metas"]["token_version"] == "2"
 
     asyncio.run(run())
 
@@ -78,7 +138,11 @@ def test_plugin_rejects_wrong_port_or_stopped_proxy():
 def test_plugin_checks_each_tcp_mapping_name_and_port():
     async def run():
         async with store.lock:
-            store.users["u_a1b2c3d4"] = User(uid="u_a1b2c3d4", balance_mb=10)
+            store.users["u_a1b2c3d4"] = User(
+                uid="u_a1b2c3d4",
+                balance_mb=10,
+                frpc_token="multi-token",
+            )
             store.proxies[1] = Proxy(
                 id=1,
                 uid="u_a1b2c3d4",
@@ -97,7 +161,7 @@ def test_plugin_checks_each_tcp_mapping_name_and_port():
 
         ok = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "multi-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1__2",
                 "remote_port": 50001,
             }
@@ -106,7 +170,7 @@ def test_plugin_checks_each_tcp_mapping_name_and_port():
 
         wrong_port = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "multi-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1__2",
                 "remote_port": 50000,
             }
@@ -115,7 +179,7 @@ def test_plugin_checks_each_tcp_mapping_name_and_port():
 
         wrong_name = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "multi-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1__3",
                 "remote_port": 50002,
             }
@@ -128,7 +192,11 @@ def test_plugin_checks_each_tcp_mapping_name_and_port():
 def test_plugin_accepts_http_subdomain_and_rejects_mismatch():
     async def run():
         async with store.lock:
-            store.users["u_a1b2c3d4"] = User(uid="u_a1b2c3d4", balance_mb=10)
+            store.users["u_a1b2c3d4"] = User(
+                uid="u_a1b2c3d4",
+                balance_mb=10,
+                frpc_token="http-token",
+            )
             store.proxies[1] = Proxy(
                 id=1,
                 uid="u_a1b2c3d4",
@@ -144,7 +212,7 @@ def test_plugin_accepts_http_subdomain_and_rejects_mismatch():
 
         ok = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "http-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1",
                 "proxy_type": "http",
                 "subdomain": "site",
@@ -155,7 +223,7 @@ def test_plugin_accepts_http_subdomain_and_rejects_mismatch():
 
         bad = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "http-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1",
                 "proxy_type": "http",
                 "subdomain": "other",
@@ -169,7 +237,11 @@ def test_plugin_accepts_http_subdomain_and_rejects_mismatch():
 def test_plugin_accepts_xtcp_and_stcp_fallback_names():
     async def run():
         async with store.lock:
-            store.users["u_a1b2c3d4"] = User(uid="u_a1b2c3d4", balance_mb=10)
+            store.users["u_a1b2c3d4"] = User(
+                uid="u_a1b2c3d4",
+                balance_mb=10,
+                frpc_token="p2p-token",
+            )
             store.proxies[1] = Proxy(
                 id=1,
                 uid="u_a1b2c3d4",
@@ -186,7 +258,7 @@ def test_plugin_accepts_xtcp_and_stcp_fallback_names():
 
         xtcp = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "p2p-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1",
                 "proxy_type": "xtcp",
             }
@@ -196,7 +268,7 @@ def test_plugin_accepts_xtcp_and_stcp_fallback_names():
 
         fallback = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "p2p-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1__fallback",
                 "proxy_type": "stcp",
             }
@@ -205,7 +277,7 @@ def test_plugin_accepts_xtcp_and_stcp_fallback_names():
 
         wrong_type = await _handle_new_proxy(
             {
-                "user": {"metas": {"token": "p2p-token"}},
+                "user": plugin_user(),
                 "proxy_name": "u_a1b2c3d4__1__fallback",
                 "proxy_type": "xtcp",
             }

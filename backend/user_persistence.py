@@ -18,12 +18,21 @@ def load_registered_users_unlocked(store: Store) -> None:
         users = data.get("users", data) if isinstance(data, dict) else data
         if not isinstance(users, list):
             return
+        changed = False
         for item in users:
             if not isinstance(item, dict):
                 continue
+            if not item.get("frpc_token"):
+                changed = True
+            if not item.get("frpc_token_version"):
+                changed = True
+            if not item.get("frpc_token_rotated_at"):
+                changed = True
             user = User.model_validate(item)
             if user.username and user.password_hash:
                 store.users[user.uid] = user
+        if changed:
+            save_registered_users_unlocked(store)
     except Exception:
         return
 

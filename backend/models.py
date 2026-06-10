@@ -48,6 +48,9 @@ class User(BaseModel):
     username: str | None = None
     password_hash: str | None = None
     created_at: datetime = Field(default_factory=now_utc)
+    frpc_token: str = Field(default_factory=new_token)
+    frpc_token_version: int = 1
+    frpc_token_rotated_at: datetime = Field(default_factory=now_utc)
     balance_mb: int = 0
     total_recharged_mb: int = 0
 
@@ -168,9 +171,29 @@ class Store:
         if not token:
             return None
         for proxy in self.proxies.values():
-            if proxy.token == token and proxy.status != ProxyStatus.DELETED:
+            user = self.users.get(proxy.uid)
+            current_token = user.frpc_token if user else proxy.token
+            if current_token == token and proxy.status != ProxyStatus.DELETED:
                 return proxy
         return None
+
+    def user_frpc_token_unlocked(self, uid: str) -> str | None:
+        user = self.users.get(uid)
+        return user.frpc_token if user else None
+
+    def sync_user_proxy_tokens_unlocked(self, uid: str) -> None:
+        token = self.user_frpc_token_unlocked(uid)
+        if not token:
+            return
+        for proxy in self.proxies.values():
+            if proxy.uid == uid and proxy.status != ProxyStatus.DELETED:
+                proxy.token = token
+
+    def has_active_proxy_unlocked(self, uid: str) -> bool:
+        return any(
+            proxy.uid == uid and proxy.status == ProxyStatus.ACTIVE
+            for proxy in self.proxies.values()
+        )
 
     def find_proxy_by_remote_port_unlocked(self, port: int | None) -> Proxy | None:
         if port is None:
@@ -237,11 +260,14 @@ class Store:
 
     def proxy_to_dto(self, proxy: Proxy) -> dict[str, Any]:
         tcp_mappings = [_tcp_mapping_to_dto(mapping) for mapping in proxy.tcp_mappings]
+        user = self.users.get(proxy.uid)
+        token = user.frpc_token if user else proxy.token
         return {
             "id": proxy.id,
             "name": proxy.name,
             "frps_name": proxy.frps_name,
-            "token": proxy.token,
+            "token": token,
+            "token_version": user.frpc_token_version if user else None,
             "proxy_type": proxy.proxy_type.value,
             "frps_remote_port": proxy.frps_remote_port,
             "local_ip": proxy.local_ip,
@@ -285,6 +311,8 @@ class Store:
             "uid": user.uid,
             "username": user.username,
             "created_at": user.created_at.isoformat(),
+            "frpc_token_version": user.frpc_token_version,
+            "frpc_token_rotated_at": user.frpc_token_rotated_at.isoformat(),
             "balance_mb": user.balance_mb,
             "total_recharged_mb": user.total_recharged_mb,
             "connection_count": self.active_connection_count_unlocked(user.uid),
