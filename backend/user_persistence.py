@@ -1,17 +1,20 @@
 """@file backend/user_persistence.py
-@brief 把注册用户、密码哈希、余额和 frpc 令牌保存到本地 JSON 文件。
+@brief 兼容 SQLite 主存储和历史 users.json 用户文件。
 @author BearFrps课程设计小组
 @course 武汉大学开源软件与技术课程 2026
 @date 2026-06-10
 @version 1.0
 @copyright Apache-2.0
 @details
-  依赖关系：json、pathlib、backend.models.User。
+  依赖关系：json、pathlib、backend.models.User、backend.sqlite_persistence。
   修改记录：2026-06-10，补充 Doxygen 风格文件头和迁移说明。
+  SQLite 是当前主持久化路径，保存用户、代理、TCP 映射和充值日志。
+  users.json 保留为历史兼容镜像，方便旧课程演示数据自动迁移。
   历史用户记录可能没有 frpc_token、version 或 rotated_at 字段。
   load_registered_users_unlocked 会通过 User 模型默认值补齐缺失字段，并回写文件。
   这样旧账号在升级后可以直接获得用户级令牌，不需要手工迁移数据库。
-  读取和保存都访问 config/users.json。
+  SQLite 加载成功时不再读取 users.json，避免旧镜像覆盖新数据库。
+  保存时先写 SQLite，再写 users.json 注册用户镜像。
   函数名带 unlocked，表示调用方必须在 store.lock 内调用，避免并发写文件。
 """
 
@@ -29,6 +32,12 @@ _USERS_FILE = ROOT_DIR / "config" / "users.json"
 
 
 def load_registered_users_unlocked(store: Store) -> None:
+    """@brief 启动时从 SQLite 或历史 JSON 文件恢复注册用户数据。
+    @param store 调用方已持有锁的进程内 Store。
+    @return 无返回值。
+    @note SQLite 有数据时直接作为权威来源；只有空库或缺库时才读取 users.json。
+    """
+
     if load_store_unlocked(store):
         return
     try:
@@ -58,6 +67,12 @@ def load_registered_users_unlocked(store: Store) -> None:
 
 
 def save_registered_users_unlocked(store: Store) -> None:
+    """@brief 保存当前 Store，并维护 users.json 兼容镜像。
+    @param store 调用方已持有锁的进程内 Store。
+    @return 无返回值。
+    @note users.json 只保存注册用户字段，完整代理和充值数据以 SQLite 为准。
+    """
+
     save_store_unlocked(store)
     users = [
         user.model_dump(mode="json")

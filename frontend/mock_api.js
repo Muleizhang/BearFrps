@@ -41,11 +41,11 @@
     检查余额、名称、连接数和代理类型。
     TCP 代理通过 allocateTcpPlan 生成远程端口映射。
     HTTP 代理生成 subdomain 和 public_url。
-    STCP/XTCP 代理生成服务端配置和 visitor 配置。
+    XTCP 代理生成 xtcp 服务端配置、stcp fallback 配置和 visitor 配置。
     创建成功后扣减用户余额，并把 proxy 写入 localStorage。
 
     makeFrpcConfig 输出服务端代理配置。
-    makeVisitorConfig 输出 STCP/XTCP visitor 配置。
+    makeVisitorConfig 输出 XTCP visitor 和 stcp fallback visitor 配置。
     makeFrpcConfigs 把 server/visitor 两类配置聚合。
     makeScripts 输出 Linux、macOS 和 Windows 脚本。
     demo 脚本内嵌简化版留言板服务，便于离线演示。
@@ -157,7 +157,6 @@
     mock 支持 frpc token 轮换。
     mock 支持 TCP 代理创建。
     mock 支持 HTTP 代理创建。
-    mock 支持 STCP 代理创建。
     mock 支持 XTCP 代理创建。
     mock 支持管理员登录。
     mock 支持端口池配置。
@@ -185,7 +184,7 @@
     mock admin/config 对应管理员端口池调整。
     mock token 轮换对应多用户令牌隔离。
     mock TCP mappings 对应多端口 TCP 代理。
-    mock visitor 配置对应 STCP/XTCP 访问者脚本。
+    mock visitor 配置对应 XTCP 和 stcp fallback 访问者脚本。
 
     mock 不替代 pytest 自动化测试。
     mock 不替代 frps/frpc 真实连通性测试。

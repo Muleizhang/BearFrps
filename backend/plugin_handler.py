@@ -27,7 +27,7 @@
   metadatas.token 是 BearFrps 用户级令牌，作为租户身份。
   metadatas.uid 是前端用户 uid，必须和令牌推导出的用户一致。
   metas.token_version 是 Login 后写入的版本号，用于后续 Ping 校验。
-  remotePort 只对 TCP 和 fallback TCP 有意义。
+  remotePort 只对 TCP 代理有意义，XTCP 的 stcp fallback 通过 serverName 匹配。
   subdomain/customDomains 只对 HTTP 代理有意义。
 
   用户不存在或令牌错误，拒绝 Login。

@@ -12,7 +12,7 @@
   metadatas.token 写入用户级 frpc_token，用于后端插件做租户身份校验。
   metadatas.uid 写入用户 uid，插件会把它与 token 推导出的用户做一致性校验。
   TCP 多端口代理会生成多个 [[proxies]]，每个代理名携带映射后缀。
-  XTCP/STCP 会生成服务端配置和 visitor 配置，方便点对点场景测试。
+  XTCP 会生成 xtcp 服务端配置、stcp fallback 配置和 visitor 配置。
   HTTP 高级配置只在字段非空时输出，避免生成 frp 不接受的空配置项。
 
   前端展示的脚本包含用户令牌，复制后应视为敏感信息。
@@ -21,11 +21,11 @@
   load 会在应用启动时把模板读入内存，减少每次请求的磁盘读取。
   render_scripts 返回 frpc、visitor 和 demo 三类脚本，按代理类型决定是否包含 visitor。
   render_frpc_config 是用户服务端代理配置的主要入口。
-  render_visitor_config 只对 STCP/XTCP 有意义。
+  render_frpc_visitor_config 只对 XTCP 有意义。
 
   字符串统一经过 _toml_string 转义。
   布尔值统一输出 true/false，避免 Python True/False 进入 TOML。
-  数组通过 _toml_array 输出，主要用于 HTTP locations 和 customDomains。
+  数组通过 _toml_array 输出，主要用于 HTTP locations。
   带空值的可选字段不输出，减少 frpc 配置解析失败的概率。
 
   普通代理使用 proxy.frps_name。
@@ -37,7 +37,7 @@
   transport.useCompression 映射压缩传输。
   transport.bandwidthLimitMode 支持 client/server。
   HTTP basicAuth、hostHeaderRewrite 和 locations 只在 HTTP 代理中输出。
-  XTCP/STCP secretKey 必须在服务端和 visitor 配置中一致。
+  XTCP 和 stcp fallback 的 secretKey 必须在服务端和 visitor 配置中一致。
 
   _render_template 用占位符替换生成跨平台脚本。
   frpc 脚本负责下载官方 frpc 并写入 frpc.toml。
@@ -48,7 +48,7 @@
   生成脚本覆盖 Linux、macOS 和 Windows。
   生成配置明确 serverAddr、serverPort、auth.token 和代理段。
   生成配置包含 metadatas.uid 和 metadatas.token。
-  TCP 代理输出 remotePort，HTTP 代理输出 subdomain/customDomains。
+  TCP 代理输出 remotePort，HTTP 代理输出 subdomain。
   P2P 代理输出 secretKey 和 visitor 配置。
   demo 脚本默认端口来自 Settings.default_local_port。
   模板加载失败会在启动阶段暴露，便于部署前发现问题。

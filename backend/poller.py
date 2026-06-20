@@ -26,7 +26,7 @@
   本平台把入站和出站相加作为代理总用量。
   当前速度用本轮累计值减去上一轮累计值，再除以时间差。
   TCP 多映射代理需要把所有 mapping 的 frps_name 用量相加。
-  STCP/XTCP fallback TCP 用量计入对应 P2P 代理。
+  XTCP 的 stcp fallback 用量计入对应 P2P 代理。
 
   已用流量达到 traffic_limit_mb 时停用代理。
   用户 balance_mb 小于等于 0 时停用代理。
@@ -93,23 +93,23 @@ class UsagePoller:
             if info.get("name") is not None
         }
         async with store.lock:
-            users_changed = False
+            store_changed = False
             for proxy in store.proxies.values():
                 if proxy.status == ProxyStatus.DELETED:
                     continue
                 if proxy.proxy_type == ProxyType.TCP:
-                    users_changed = (
-                        _apply_tcp_poll_info(proxy, by_name, self.interval_sec) or users_changed
+                    store_changed = (
+                        _apply_tcp_poll_info(proxy, by_name, self.interval_sec) or store_changed
                     )
                 elif proxy.proxy_type == ProxyType.HTTP:
                     info = by_name.get(proxy.frps_name)
-                    users_changed = _apply_poll_info(proxy, info, self.interval_sec) or users_changed
+                    store_changed = _apply_poll_info(proxy, info, self.interval_sec) or store_changed
                 else:
-                    users_changed = (
-                        _apply_p2p_poll_info(proxy, by_name, self.interval_sec) or users_changed
+                    store_changed = (
+                        _apply_p2p_poll_info(proxy, by_name, self.interval_sec) or store_changed
                     )
-                _apply_stop_rules(proxy)
-            if users_changed:
+                store_changed = _apply_stop_rules(proxy) or store_changed
+            if store_changed:
                 save_registered_users_unlocked(store)
 
     async def _list_all_proxy_infos(self) -> list[dict[str, Any]] | None:
@@ -244,16 +244,44 @@ def _apply_p2p_poll_info(
 
 
 def _charge_usage(proxy: Proxy, delta: int) -> bool:
+    """@brief 累加代理流量并按完整 MB 扣减用户余额。
+    @param proxy 待计费代理。
+    @param delta 本轮新增字节数。
+    @return 只要流量发生变化就返回 True，提示调用方保存 Store。
+    @note 余额以 MB 为单位，未满 1 MB 的尾数保留到后续轮询累计。
+    """
+
+    previous_used_bytes = proxy.traffic_used_bytes
     proxy.traffic_used_bytes += delta
-    return False
+    user = store.users.get(proxy.uid)
+    if user is not None:
+        previous_used_mb = previous_used_bytes // (1024 * 1024)
+        current_used_mb = proxy.traffic_used_bytes // (1024 * 1024)
+        charged_mb = current_used_mb - previous_used_mb
+        if charged_mb > 0:
+            user.balance_mb = max(0, user.balance_mb - charged_mb)
+    return True
 
 
-def _apply_stop_rules(proxy: Proxy) -> None:
+def _apply_stop_rules(proxy: Proxy) -> bool:
+    """@brief 根据流量上限和用户余额停用代理。
+    @param proxy 待检查代理。
+    @return 状态发生变化时返回 True，提示调用方保存 Store。
+    @note 停用不释放 TCP 端口，端口释放仍由删除流程负责。
+    """
+
     if proxy.status != ProxyStatus.ACTIVE:
-        return
+        return False
     if proxy.traffic_used_bytes >= proxy.traffic_limit_mb * 1024 * 1024:
         proxy.status = ProxyStatus.STOPPED_BY_ADMIN
         proxy.is_online = False
+        return True
+    user = store.users.get(proxy.uid)
+    if user is not None and user.balance_mb <= 0:
+        proxy.status = ProxyStatus.STOPPED_BY_ADMIN
+        proxy.is_online = False
+        return True
+    return False
 
 
 def _as_int(value: Any) -> int:

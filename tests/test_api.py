@@ -11,7 +11,7 @@
   用户注册、登录、注销、旧 UID 迁移和用户持久化。
   TCP 单端口、多端口、自动端口、端口冲突和范围释放。
   HTTP 代理、子域名、高级配置和公开 URL。
-  STCP/XTCP 代理、visitor 脚本和 fallback 配置。
+  XTCP 代理、visitor 脚本和 stcp fallback 配置。
   管理员登录、端口池调整、启停删除代理和用户列表。
   展示页只返回 active 且 online 的代理。
 
@@ -60,7 +60,7 @@
   frpc_config 必须包含用户 token metadata。
   TCP 响应必须包含 frps_remote_port 和 tcp_mappings。
   HTTP 响应必须包含 public_url 或 public_urls。
-  XTCP/STCP 响应必须包含 visitor 配置。
+  XTCP 响应必须包含 visitor 配置。
   删除代理响应固定为 {"ok": true}。
   管理端登录失败不能创建 session。
   管理端删除代理后端口池应释放相关端口。

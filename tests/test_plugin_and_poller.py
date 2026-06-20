@@ -12,7 +12,7 @@
   NewProxy 事件拒绝错误端口、错误 subdomain 和停用代理。
   Ping 事件拒绝旧 token_version，保证轮换令牌后旧配置失效。
   TCP 多端口代理逐个校验 frps_name 和 remotePort。
-  STCP/XTCP fallback 代理状态和流量统计。
+  XTCP 与 stcp fallback 代理状态和流量统计。
   轮询器按累计流量计算当前速率，并在超额时停用代理。
 
   使用 FakeClient 模拟 frps admin API，避免依赖真实 frps 进程。
@@ -27,7 +27,7 @@
   test_poller_updates_usage_and_stops_when_limit_reached 覆盖流量统计和超额停用。
   test_poller_aggregates_tcp_mapping_usage 覆盖 TCP 多端口流量聚合。
   test_poller_updates_http_proxy_usage 覆盖 HTTP 代理在线和用量更新。
-  test_poller_tracks_xtcp_online_and_charges_only_fallback_stcp 覆盖 XTCP/STCP fallback 计费边界。
+  test_poller_tracks_xtcp_online_and_charges_only_fallback_stcp 覆盖 XTCP 与 stcp fallback 计费边界。
 
   login_content 使用 _auth_key 模拟 frp privilege_key。
   plugin_user 模拟 Login 后 frp 在 content 中携带的 user/metas。
@@ -84,7 +84,7 @@
   覆盖 token_version 轮换。
   覆盖 TCP 多端口映射。
   覆盖 HTTP 子域名。
-  覆盖 STCP/XTCP fallback。
+  覆盖 XTCP 与 stcp fallback。
   覆盖轮询器流量统计。
   覆盖超额停用。
 
@@ -97,7 +97,7 @@
   修改插件事件字段时必须补对应测试。
   修改 token 规则时必须补旧配置拒绝测试。
   修改轮询器计费时必须补流量聚合测试。
-  修改 P2P fallback 时必须补 STCP/XTCP 场景。
+  修改 P2P fallback 时必须补 XTCP 与 stcp fallback 场景。
   修改在线状态规则时必须补 is_online 断言。
 @section plugin_test_doxygen Doxygen 注释约束
   插件测试文件头说明事件输入、输出和拒绝场景。

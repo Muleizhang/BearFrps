@@ -14,9 +14,9 @@
   /api/proxies 支持创建、列表、删除和重新获取脚本。
   创建代理前检查余额、连接数、名称唯一性、端口范围和高级配置。
   TCP 支持 auto/single/range 三种端口模式，并写入 tcp_mappings。
-  HTTP 代理使用 subdomain 或 customDomains 生成公开访问 URL。
-  STCP/XTCP 生成服务端代理和访问者脚本，fallback TCP 端口仍需端口池校验。
-  创建成功后立即扣减用户余额，删除代理不退还已分配流量。
+  HTTP 代理使用 subdomain 生成公开访问 URL。
+  XTCP 生成 xtcp 服务端代理、stcp fallback 代理和 visitor 脚本。
+  TCP/HTTP 创建成功后扣减用户余额，删除代理不退还已分配流量。
 
   用户输入不合法返回 HTTP 400。
   未登录用户由 require_user 返回 HTTP 401。
@@ -31,8 +31,8 @@
   校验用户余额是否足够支付 traffic_mb。
   校验连接数量是否超过 max_connections_per_user。
   校验同一用户下代理名称是否重复。
-  按 proxy_type 分派到 TCP、HTTP、STCP 或 XTCP 参数构建逻辑。
-  成功创建 Proxy 后扣减余额并保存用户数据。
+  按 proxy_type 分派到 TCP、HTTP 或 XTCP 参数构建逻辑。
+  成功创建 TCP/HTTP Proxy 后扣减余额并保存用户数据。
   退出锁后渲染 frpc 配置和脚本，返回给前端弹窗展示。
 
   auto 模式从端口池申请 count 个连续可用端口。
@@ -42,13 +42,12 @@
   任一端口预留失败时必须回滚已预留端口。
 
   subdomain 会拼接 effective_subdomain_host 生成公开 URL。
-  custom_domains 只接受规范化后的域名列表。
   locations、host_header_rewrite、http_user/http_password 作为高级配置输出。
   HTTP 代理不占用 TCP 端口池，因此不影响管理员端口范围收缩。
 
   secretKey 使用用户级令牌或代理字段派生，visitor 配置必须一致。
-  fallback TCP 代理用于 XTCP 无法打洞时的回退连接。
-  fallback remotePort 仍然占用端口池，需要和普通 TCP 端口同样校验。
+  stcp fallback 代理用于 XTCP 无法打洞时的回退连接。
+  fallback 不占用平台公网 TCP 端口池，visitor_bind_port 只在用户本机监听。
   visitor_bind_port 是用户本地访问端口，不进入平台端口池。
 
   响应中的 proxy 是安全 DTO，不直接暴露 password_hash。
@@ -113,6 +112,12 @@ from backend.user_persistence import save_registered_users_unlocked
 
 
 def _add_public_url(dto: dict[str, object]) -> dict[str, object]:
+    """@brief 为代理 DTO 补充前端展示用访问地址。
+    @param dto store 输出的代理字典，会被原地补充 public_url/public_urls。
+    @return 补充访问地址后的同一个 DTO。
+    @note XTCP 需要 visitor 脚本连接，不暴露可直接点击的公网 URL。
+    """
+
     if dto.get("proxy_type") == ProxyType.HTTP.value:
         subdomain = dto.get("subdomain")
         if subdomain:
@@ -151,6 +156,10 @@ _HOST_HEADER_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?$")
 
 
 class TcpPortsRequest(BaseModel):
+    """@brief TCP 代理的公网端口和本地端口映射请求。
+    @note auto 由端口池分配连续公网端口，single/range 需要显式校验并预留。
+    """
+
     mode: Literal["auto", "single", "range"] = "auto"
     mapping_mode: Literal["many-to-one", "many-to-many"] = "many-to-one"
     count: int | None = Field(default=None, ge=1)
@@ -162,6 +171,10 @@ class TcpPortsRequest(BaseModel):
 
 
 class AdvancedConfigRequest(BaseModel):
+    """@brief 传输、HTTP 和 XTCP visitor 的高级配置请求。
+    @note HTTP 认证字段必须成对出现，fallback 超时只影响 XTCP visitor。
+    """
+
     use_encryption: bool = False
     use_compression: bool = False
     bandwidth_limit_mode: str = "server"
@@ -174,6 +187,10 @@ class AdvancedConfigRequest(BaseModel):
 
 
 class CreateProxyRequest(BaseModel):
+    """@brief 创建代理的用户请求体。
+    @note 字段按 proxy_type 生效，TCP 使用 tcp_ports，HTTP 使用 subdomain，XTCP 使用 visitor_bind_port。
+    """
+
     name: str = Field(min_length=1, max_length=20)
     proxy_type: ProxyType = ProxyType.TCP
     traffic_mb: int = Field(gt=0)
@@ -187,6 +204,10 @@ class CreateProxyRequest(BaseModel):
 
 
 class UpdateProxyRequest(BaseModel):
+    """@brief 修改代理的用户请求体。
+    @note 不允许修改 proxy_type 和公网 remotePort，避免已发脚本和端口池状态失配。
+    """
+
     name: str | None = Field(default=None, min_length=1, max_length=20)
     traffic_mb: int | None = Field(default=None, gt=0)
     speed_limit_kbps: int | None = Field(default=None, gt=0)
@@ -198,6 +219,8 @@ class UpdateProxyRequest(BaseModel):
 
 
 class UserAuthRequest(BaseModel):
+    """@brief 用户注册和登录共用的账号密码请求体。"""
+
     username: str
     password: str
 
@@ -208,6 +231,13 @@ async def register(
     response: Response,
     legacy_uid: Annotated[str | None, Cookie(alias="uid")] = None,
 ) -> dict[str, object]:
+    """@brief 注册账号并建立用户会话。
+    @param body 用户名和密码。
+    @param response FastAPI 响应对象，用于写入 session cookie。
+    @param legacy_uid 历史匿名 UID cookie，用于把旧演示数据绑定到新账号。
+    @return 当前用户的公开 DTO。
+    """
+
     async with store.lock:
         user = register_user_unlocked(body.username, body.password, legacy_uid)
     create_user_session(response, user)
@@ -216,6 +246,13 @@ async def register(
 
 @router.post("/api/user/login")
 async def login(body: UserAuthRequest, response: Response) -> dict[str, object]:
+    """@brief 校验账号密码并建立用户会话。
+    @param body 用户名和密码。
+    @param response FastAPI 响应对象，用于写入 session cookie。
+    @return 当前用户的公开 DTO。
+    @throws HTTPException 用户不存在或密码错误时返回 401。
+    """
+
     username = normalize_username(body.username)
     async with store.lock:
         user = store.find_user_by_username_unlocked(username)
@@ -230,22 +267,44 @@ async def logout(
     request: Request,
     response: Response,
 ) -> dict[str, bool]:
+    """@brief 清除当前用户会话 cookie。
+    @param request FastAPI 请求对象，用于读取待清理 session。
+    @param response FastAPI 响应对象，用于删除 cookie。
+    @return ok=true 表示退出流程完成。
+    """
+
     clear_user_session(response, request.cookies.get(USER_SESSION_COOKIE))
     return {"ok": True}
 
 
 @router.get("/api/user/me")
 async def current_user(user: User = Depends(require_user)) -> dict[str, object]:
+    """@brief 返回当前登录用户的公开信息。
+    @param user require_user 解析出的已登录用户。
+    @return 不包含密码哈希和 frpc 令牌的用户 DTO。
+    """
+
     return user_public_dto(user)
 
 
 @router.post("/api/user/init")
 async def init_user(user: User = Depends(require_user)) -> dict[str, object]:
+    """@brief 兼容旧前端初始化入口。
+    @param user require_user 解析出的已登录用户。
+    @return 与 /api/user/me 相同的用户 DTO。
+    """
+
     return user_public_dto(user)
 
 
 @router.post("/api/user/recharge")
 async def recharge(user: User = Depends(require_user)) -> dict[str, int]:
+    """@brief 给当前用户发放一次课堂演示免费流量。
+    @param user require_user 解析出的已登录用户。
+    @return 更新后的余额和累计充值量。
+    @note 充值记录和余额在同一个 store.lock 临界区内保存。
+    """
+
     async with store.lock:
         current = store.ensure_user_unlocked(user.uid)
         current.balance_mb += settings.free_recharge_amount_mb
@@ -260,6 +319,12 @@ async def recharge(user: User = Depends(require_user)) -> dict[str, int]:
 
 @router.get("/api/user/frpc-token")
 async def get_frpc_token(user: User = Depends(require_user)) -> dict[str, object]:
+    """@brief 查询当前用户的 frpc 元数据令牌。
+    @param user require_user 解析出的已登录用户。
+    @return token、版本号和最近轮换时间。
+    @note 查询时同步历史代理 token 字段，兼容旧脚本生成逻辑。
+    """
+
     async with store.lock:
         current = store.ensure_user_unlocked(user.uid)
         store.sync_user_proxy_tokens_unlocked(current.uid)
@@ -268,6 +333,12 @@ async def get_frpc_token(user: User = Depends(require_user)) -> dict[str, object
 
 @router.post("/api/user/frpc-token/rotate")
 async def rotate_frpc_token(user: User = Depends(require_user)) -> dict[str, object]:
+    """@brief 轮换当前用户的 frpc 元数据令牌。
+    @param user require_user 解析出的已登录用户。
+    @return 新 token、版本号和轮换时间。
+    @note 旧脚本会在后续 Login/Ping 中被插件拒绝，用户需要重新获取脚本。
+    """
+
     async with store.lock:
         current = store.ensure_user_unlocked(user.uid)
         current.frpc_token = new_token()
@@ -280,6 +351,11 @@ async def rotate_frpc_token(user: User = Depends(require_user)) -> dict[str, obj
 
 @router.get("/api/proxies")
 async def list_proxies(user: User = Depends(require_user)) -> dict[str, list[dict[str, object]]]:
+    """@brief 列出当前用户名下的代理。
+    @param user require_user 解析出的已登录用户。
+    @return proxies 数组，元素为普通用户安全 DTO。
+    """
+
     async with store.lock:
         proxies = [
             _add_public_url(store.proxy_to_dto(proxy))
@@ -295,6 +371,15 @@ async def create_proxy(
     response: Response,
     user: User = Depends(require_user),
 ) -> dict[str, object]:
+    """@brief 创建代理并返回 frpc 配置和启动脚本。
+    @param body 创建代理请求体。
+    @param response 保留给 FastAPI 依赖注入，当前不直接写入响应头。
+    @param user require_user 解析出的已登录用户。
+    @return proxy DTO、frpc 配置和跨平台脚本 bundle。
+    @throws HTTPException 余额不足、端口不可用、名称或子域名冲突时返回 400。
+    @note TCP 端口预留、TCP/HTTP 余额扣减和持久化必须在 store.lock 内完成。
+    """
+
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="名称不能为空")
@@ -380,6 +465,13 @@ async def create_proxy(
 
 @router.delete("/api/proxies/{proxy_id}")
 async def delete_proxy(proxy_id: int, user: User = Depends(require_user)) -> dict[str, bool]:
+    """@brief 逻辑删除当前用户的代理。
+    @param proxy_id 待删除代理 ID。
+    @param user require_user 解析出的已登录用户。
+    @return ok=true 表示删除完成或目标已处于删除状态。
+    @note TCP 代理会释放所有 tcp_mappings 的公网端口，已扣流量不退回。
+    """
+
     async with store.lock:
         proxy = store.proxies.get(proxy_id)
         if proxy is None or proxy.uid != user.uid:
@@ -400,6 +492,14 @@ async def update_proxy(
     body: UpdateProxyRequest,
     user: User = Depends(require_user),
 ) -> dict[str, object]:
+    """@brief 修改代理的可变配置并重新返回脚本。
+    @param proxy_id 待修改代理 ID。
+    @param body 修改请求体。
+    @param user require_user 解析出的已登录用户。
+    @return 修改后的 proxy DTO、frpc 配置和脚本 bundle。
+    @note 更新 TCP 本地端口只平移 localPort，不允许改 remotePort。
+    """
+
     async with store.lock:
         current = store.ensure_user_unlocked(user.uid)
         proxy = store.proxies.get(proxy_id)
@@ -462,6 +562,13 @@ async def update_proxy(
 
 @router.get("/api/proxies/{proxy_id}/scripts")
 async def get_proxy_scripts(proxy_id: int, user: User = Depends(require_user)) -> dict[str, object]:
+    """@brief 重新渲染指定代理的当前脚本。
+    @param proxy_id 代理 ID。
+    @param user require_user 解析出的已登录用户。
+    @return proxy DTO、frpc 配置和跨平台脚本 bundle。
+    @note 用于令牌轮换或模板更新后让用户重新复制脚本。
+    """
+
     async with store.lock:
         proxy = store.proxies.get(proxy_id)
         if proxy is None or proxy.uid != user.uid:
@@ -471,6 +578,12 @@ async def get_proxy_scripts(proxy_id: int, user: User = Depends(require_user)) -
 
 
 def _proxy_scripts_response(proxy: Proxy, dto: dict[str, object]) -> dict[str, object]:
+    """@brief 组装创建、修改和重新获取脚本的统一响应。
+    @param proxy 用于渲染配置和脚本的代理模型。
+    @param dto 已按调用方权限过滤过的代理 DTO。
+    @return 包含 proxy、frpc_config、frpc_configs 和 scripts 的响应字典。
+    """
+
     frpc_config = script_renderer.render_frpc_config(proxy, settings)
     return {
         "proxy": dto,
@@ -481,6 +594,11 @@ def _proxy_scripts_response(proxy: Proxy, dto: dict[str, object]) -> dict[str, o
 
 
 def _frpc_token_response(user: User) -> dict[str, object]:
+    """@brief 组装 frpc 用户令牌响应。
+    @param user 当前用户模型。
+    @return token、version 和 rotated_at 字段。
+    """
+
     return {
         "token": user.frpc_token,
         "version": user.frpc_token_version,
@@ -489,6 +607,12 @@ def _frpc_token_response(user: User) -> dict[str, object]:
 
 
 def _normalize_local_ip(value: str | None) -> str:
+    """@brief 校验并规范化 frpc localIP。
+    @param value 用户提交的本地地址，可为空。
+    @return 合法地址，空值默认 127.0.0.1。
+    @throws HTTPException 地址包含非法字符或点号位置异常时返回 400。
+    """
+
     local_ip = (value or "127.0.0.1").strip()
     if not _LOCAL_IP_RE.fullmatch(local_ip):
         raise HTTPException(status_code=400, detail="本地地址格式不合法")
@@ -498,6 +622,12 @@ def _normalize_local_ip(value: str | None) -> str:
 
 
 def _normalize_subdomain(value: str | None) -> str:
+    """@brief 校验并规范化 HTTP 子域名前缀。
+    @param value 用户提交的子域名前缀。
+    @return 小写后的合法子域名前缀。
+    @throws HTTPException 为空或不符合域名片段规则时返回 400。
+    """
+
     subdomain = (value or "").strip().lower()
     if not subdomain:
         raise HTTPException(status_code=400, detail="请输入子域名前缀")
@@ -509,6 +639,13 @@ def _normalize_subdomain(value: str | None) -> str:
 def _normalize_advanced_config(
     proxy_type: ProxyType, advanced: AdvancedConfigRequest | None
 ) -> dict[str, object]:
+    """@brief 归一化高级配置并屏蔽与代理类型无关的字段。
+    @param proxy_type 当前代理类型。
+    @param advanced 用户提交的高级配置，可为空。
+    @return 可直接写入 Proxy 模型的高级配置字典。
+    @throws HTTPException 限速位置、HTTP 认证或 fallback 超时非法时返回 400。
+    """
+
     config = advanced or AdvancedConfigRequest()
     if config.bandwidth_limit_mode not in ("server", "client"):
         raise HTTPException(status_code=400, detail="限速位置必须是 server 或 client")
@@ -544,11 +681,22 @@ def _normalize_advanced_config(
 
 
 def _clean_optional(value: str | None) -> str | None:
+    """@brief 去除可选字符串首尾空白并把空串转为 None。
+    @param value 用户提交的可选字符串。
+    @return 清理后的字符串或 None。
+    """
+
     text = (value or "").strip()
     return text or None
 
 
 def _normalize_http_locations(values: list[str] | None) -> list[str]:
+    """@brief 校验 HTTP 代理的 locations 列表。
+    @param values 用户提交的路径列表，可为空。
+    @return 去除空项后的路径列表。
+    @throws HTTPException 路径不以 / 开头、包含空白或超过 10 条时返回 400。
+    """
+
     locations = []
     for item in values or []:
         location = str(item).strip()
@@ -565,6 +713,12 @@ def _normalize_http_locations(values: list[str] | None) -> list[str]:
 
 
 def _normalize_host_header(value: str | None) -> str | None:
+    """@brief 校验 HTTP hostHeaderRewrite 值。
+    @param value 用户提交的 Host 或 Host:Port。
+    @return 合法 Host 字符串或 None。
+    @throws HTTPException 主机名或端口非法时返回 400。
+    """
+
     host = _clean_optional(value)
     if host is None:
         return None
@@ -586,6 +740,14 @@ def _normalize_host_header(value: str | None) -> str | None:
 def _allocate_tcp_ports(
     body: CreateProxyRequest, legacy_local_port: int
 ) -> tuple[list[int], list[int]]:
+    """@brief 根据请求模式分配或预留 TCP 公网端口。
+    @param body 创建代理请求体。
+    @param legacy_local_port 兼容旧前端 local_port 字段的默认本地端口。
+    @return 公网端口列表和对应本地端口列表。
+    @throws HTTPException 端口池不足、用户指定端口不可用或端口段非法时返回 400。
+    @note single/range 会立即预留用户指定 remotePort，后续创建失败需由调用链避免。
+    """
+
     tcp_ports = body.tcp_ports or TcpPortsRequest(
         mode="auto",
         count=1,
@@ -627,6 +789,12 @@ def _allocate_tcp_ports(
 
 
 def _validate_tcp_port_count(count: int) -> None:
+    """@brief 校验单个 TCP 代理可绑定的端口数量。
+    @param count 需要分配或预留的公网端口数量。
+    @return 无返回值。
+    @throws HTTPException 超过 settings.max_tcp_ports_per_proxy 时返回 400。
+    """
+
     if count > settings.max_tcp_ports_per_proxy:
         raise HTTPException(
             status_code=400,
@@ -635,12 +803,26 @@ def _validate_tcp_port_count(count: int) -> None:
 
 
 def _local_ports_from_start(start: int, count: int) -> list[int]:
+    """@brief 从本地起始端口生成连续端口段。
+    @param start 本地起始端口。
+    @param count 端口数量。
+    @return 长度为 count 的本地端口列表。
+    @throws HTTPException 端口段超出 1-65535 时返回 400。
+    """
+
     if start < 1 or start + count - 1 > 65535:
         raise HTTPException(status_code=400, detail="本地端口段必须在 1-65535 之间")
     return list(range(start, start + count))
 
 
 def _update_tcp_local_ports(proxy: Proxy, local_port: int) -> None:
+    """@brief 平移 TCP 多端口代理的本地端口段。
+    @param proxy 待修改的 TCP 代理。
+    @param local_port 新的首个本地端口。
+    @return 无返回值。
+    @note 只更新 local_port/actual_local_port，不改变平台分配的 remotePort。
+    """
+
     if not proxy.tcp_mappings:
         proxy.local_port = local_port
         proxy.actual_local_port = local_port
@@ -659,6 +841,15 @@ def _update_tcp_local_ports(proxy: Proxy, local_port: int) -> None:
 
 
 def _update_traffic_limit_unlocked(user: User, proxy: Proxy, traffic_mb: int) -> None:
+    """@brief 修改代理流量额度并按增量扣减余额。
+    @param user 代理所属用户，调用方已持有 store.lock。
+    @param proxy 待修改代理。
+    @param traffic_mb 新的代理流量额度。
+    @return 无返回值。
+    @throws HTTPException 新额度小于已用流量或余额不足时返回 400。
+    @note XTCP 目前不扣减用户余额，与创建路径保持一致。
+    """
+
     if traffic_mb * 1024 * 1024 < proxy.traffic_used_bytes:
         raise HTTPException(status_code=400, detail="分配流量不能小于已用流量")
     if proxy.proxy_type != ProxyType.XTCP and traffic_mb > proxy.traffic_limit_mb:
@@ -670,6 +861,12 @@ def _update_traffic_limit_unlocked(user: User, proxy: Proxy, traffic_mb: int) ->
 
 
 def _reserve_requested_remote_ports(ports: list[int]) -> None:
+    """@brief 预留用户显式指定的公网端口。
+    @param ports 待预留 remotePort 列表。
+    @return 无返回值。
+    @throws HTTPException 任一端口不在可分配范围或已被占用时返回 400。
+    """
+
     unavailable = port_pool.reserve_many(ports)
     if unavailable:
         raise HTTPException(
@@ -679,4 +876,10 @@ def _reserve_requested_remote_ports(ports: list[int]) -> None:
 
 
 def _tcp_mapping_name(base_name: str, index: int) -> str:
+    """@brief 生成多端口 TCP 映射的 frps 代理名。
+    @param base_name 当前代理的基础 frps_name。
+    @param index tcp_mappings 中的零基序号。
+    @return 第一个端口使用基础名，后续端口追加 __序号。
+    """
+
     return base_name if index == 0 else f"{base_name}__{index + 1}"

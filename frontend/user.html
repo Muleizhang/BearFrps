@@ -13,7 +13,7 @@
     顶部导航展示用户端、管理端和展示页入口。
     认证区域支持登录与注册，认证完成后显示 UID、余额和 frpc 令牌信息。
     代理列表展示每条连接的类型、地址、状态、流量和操作按钮。
-    创建代理区域按 TCP/HTTP/STCP/XTCP 分组，避免不同类型字段混在一起。
+    创建代理区域按 TCP/HTTP/XTCP 分组，避免不同类型字段混在一起。
     配置弹窗按 frpc 配置、visitor 配置、frpc 脚本和 demo 脚本分 tab 展示。
 
     用户令牌由后端生成和轮换，页面只展示、复制和触发轮换，不在前端生成正式令牌。
@@ -45,7 +45,7 @@
     user 保存后端返回的公开用户信息。
     frpcToken 保存当前用户令牌元数据，不负责鉴权。
     proxies 保存当前用户代理列表。
-    createType 控制 TCP/HTTP/STCP/XTCP 创建表单。
+    createType 控制 TCP/HTTP/XTCP 创建表单。
     createForms 按代理类型保存独立表单状态。
     scriptModal 保存当前选中的配置和脚本响应。
     mainTab/subTab 控制配置弹窗中的内容切换。
@@ -69,7 +69,7 @@
     TCP single 模式需要 remote_port 和 local_port。
     TCP range 模式需要 remote_start_port、remote_end_port、range_local_start_port 和 range_mapping_mode。
     HTTP subdomain 需要符合后端子域名规则。
-    visitor_bind_port 是本地访问 STCP/XTCP visitor 的端口。
+    visitor_bind_port 是本地访问 XTCP visitor 的端口。
     fallback_timeout_ms 只对 XTCP fallback 有意义。
 
     publicHost 根据 proxy_type 选择 host:port 或 HTTP URL。
@@ -108,16 +108,15 @@
     多端口映射在列表中通过 tcp_mappings 展示。
 
     subdomain 是推荐方式，适合课堂统一域名。
-    custom_domains 用于自定义域名场景。
     http_user/http_password 用于 frp HTTP basic auth。
     http_locations_text 可用换行或逗号分隔路径。
     host_header_rewrite 用于反向代理时改写 Host。
     public_urls 可能包含多个公开访问地址。
 
-    STCP 和 XTCP 都需要 secretKey 保持服务端与 visitor 一致。
+    XTCP 服务端和 stcp fallback 都需要 secretKey 保持服务端与 visitor 一致。
     visitor_bind_port 是用户本机访问 visitor 的端口。
     server_name 使用后端生成的 frps_name，避免用户名称冲突。
-    p2p_fallback_name 用于 XTCP 失败后的 TCP fallback。
+    p2p_fallback_name 用于 XTCP 失败后的 stcp fallback。
     fallback_timeout_ms 控制 XTCP 尝试失败后回退时机。
 
     online 且 active 显示绿色状态。
@@ -155,7 +154,6 @@
     页面能复制和轮换 frpc token。
     页面能创建 TCP 代理。
     页面能创建 HTTP 代理。
-    页面能创建 STCP 代理。
     页面能创建 XTCP 代理。
     页面能展示连接状态。
     页面能展示已用流量和限额。

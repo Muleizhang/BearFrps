@@ -28,6 +28,11 @@ router = APIRouter()
 
 @router.get("/api/show/online")
 async def show_online() -> dict[str, list[dict[str, object]]]:
+    """@brief 返回展示页可公开显示的在线代理列表。
+    @return proxies 数组，只包含展示所需字段和访问地址。
+    @note 展示页无鉴权，不能返回 uid、token、密码或管理员字段。
+    """
+
     async with store.lock:
         proxies = [
             {
@@ -61,11 +66,22 @@ async def show_online() -> dict[str, list[dict[str, object]]]:
 
 
 def _public_url(proxy) -> str | None:
+    """@brief 返回代理的第一个展示访问地址。
+    @param proxy 代理模型。
+    @return 可点击公网 URL；XTCP 或无地址时返回 None。
+    """
+
     urls = _public_urls(proxy)
     return urls[0] if urls else None
 
 
 def _public_urls(proxy) -> list[str]:
+    """@brief 根据代理类型生成展示页访问地址列表。
+    @param proxy 代理模型。
+    @return HTTP 子域名 URL 或 TCP 端口 URL 列表。
+    @note XTCP 需要本地 visitor，因此展示页不生成公网 URL。
+    """
+
     if proxy.proxy_type == ProxyType.HTTP:
         if not proxy.subdomain:
             return []

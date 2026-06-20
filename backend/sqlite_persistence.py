@@ -6,10 +6,13 @@
 @version 1.0
 @copyright Apache-2.0
 @details
-  依赖关系：sqlite3、json、backend.models。
+  依赖关系：sqlite3、backend.models。
   运行时仍使用内存 Store，SQLite 负责重启后的完整恢复。
   payload_json 保存完整 Pydantic 模型，普通列用于人工检查和基础查询。
   函数名带 unlocked，表示调用方必须持有 store.lock。
+  保存采用全量替换策略，保证 SQLite 镜像与内存 Store 同步。
+  表中的 uid、status、remote_port 等普通列不作为模型反序列化来源。
+  反序列化只读取 payload_json，避免表结构扩展破坏旧数据恢复。
 """
 
 from __future__ import annotations
@@ -25,6 +28,12 @@ _DB_FILE = ROOT_DIR / "config" / "bearfrps.db"
 
 
 def load_store_unlocked(store: Store) -> bool:
+    """@brief 从 SQLite 恢复内存 Store。
+    @param store 调用方已持有锁的进程内 Store。
+    @return 成功加载至少一类业务数据时返回 True，否则返回 False。
+    @note 本函数不会清空现有 Store，调用方应在启动阶段或测试隔离后使用。
+    """
+
     if not _DB_FILE.exists():
         return False
     _ensure_schema()
@@ -48,6 +57,12 @@ def load_store_unlocked(store: Store) -> bool:
 
 
 def save_store_unlocked(store: Store) -> None:
+    """@brief 把当前 Store 全量写入 SQLite。
+    @param store 调用方已持有锁的进程内 Store。
+    @return 无返回值。
+    @note 使用同一事务先删除旧镜像再插入新快照，避免部分表保存新旧混合数据。
+    """
+
     _ensure_schema()
     with _connect() as conn:
         conn.execute("DELETE FROM tcp_mappings")
@@ -97,6 +112,11 @@ def save_store_unlocked(store: Store) -> None:
 
 
 def _connect() -> sqlite3.Connection:
+    """@brief 创建启用 Row 工厂和外键检查的 SQLite 连接。
+    @return 可用于 with 语句的 sqlite3.Connection。
+    @note 目录会在连接前创建，便于首次启动时直接写入 config/bearfrps.db。
+    """
+
     _DB_FILE.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(_DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -105,6 +125,11 @@ def _connect() -> sqlite3.Connection:
 
 
 def _ensure_schema() -> None:
+    """@brief 创建 SQLite 表和索引。
+    @return 无返回值。
+    @note CREATE TABLE IF NOT EXISTS 只做增量建表，不主动迁移或删除历史字段。
+    """
+
     _DB_FILE.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
         conn.executescript(
@@ -165,6 +190,11 @@ def _ensure_schema() -> None:
 
 
 def _user_row(user: User) -> tuple[object, ...]:
+    """@brief 把 User 转换为 users 表插入参数。
+    @param user 待持久化的注册用户模型。
+    @return 与 INSERT INTO users 字段顺序一致的元组。
+    """
+
     return (
         user.uid,
         user.username,
@@ -177,6 +207,11 @@ def _user_row(user: User) -> tuple[object, ...]:
 
 
 def _proxy_row(proxy: Proxy) -> tuple[object, ...]:
+    """@brief 把 Proxy 转换为 proxies 表插入参数。
+    @param proxy 待持久化的代理模型。
+    @return 与 INSERT INTO proxies 字段顺序一致的元组。
+    """
+
     return (
         proxy.id,
         proxy.uid,
@@ -196,6 +231,11 @@ def _proxy_row(proxy: Proxy) -> tuple[object, ...]:
 
 
 def _tcp_mapping_rows(proxy: Proxy) -> Iterable[tuple[object, ...]]:
+    """@brief 生成一个 Proxy 下所有 TCP 映射的插入参数。
+    @param proxy 可能包含多个 tcp_mappings 的代理模型。
+    @return 可直接传给 executemany 的映射行迭代器。
+    """
+
     for mapping in proxy.tcp_mappings:
         yield (
             proxy.id,
@@ -209,6 +249,11 @@ def _tcp_mapping_rows(proxy: Proxy) -> Iterable[tuple[object, ...]]:
 
 
 def _recharge_row(log: RechargeLog) -> tuple[object, ...]:
+    """@brief 把 RechargeLog 转换为 recharge_logs 表插入参数。
+    @param log 待持久化的充值记录。
+    @return 与 INSERT INTO recharge_logs 字段顺序一致的元组。
+    """
+
     return (
         log.id,
         log.uid,

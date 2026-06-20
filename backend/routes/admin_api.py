@@ -13,7 +13,7 @@
   /api/admin/proxies 返回全量代理 DTO，并允许停用、恢复和删除。
   /api/admin/users 返回注册用户和连接数量。
   缩小端口池前必须检查 active TCP 代理是否仍在新范围内。
-  HTTP/STCP/XTCP 不占用平台 TCP 端口池，端口范围检查只针对 TCP remotePort。
+  HTTP/XTCP 不占用平台 TCP 端口池，端口范围检查只针对 TCP remotePort。
   管理员删除代理会释放端口，停用代理不释放端口，避免用户配置被其他人抢占。
 """
 
@@ -37,17 +37,28 @@ router = APIRouter(prefix="/api/admin")
 
 
 class LoginRequest(BaseModel):
+    """@brief 管理员登录请求体。"""
+
     username: str
     password: str
 
 
 class UpdateAllocatableRangeRequest(BaseModel):
+    """@brief 管理员更新公网 TCP 端口池范围的请求体。"""
+
     start: int
     end: int
 
 
 @router.post("/login")
 async def login(body: LoginRequest, response: Response) -> dict[str, bool]:
+    """@brief 校验管理员账号并写入管理端 session。
+    @param body 管理员用户名和密码。
+    @param response FastAPI 响应对象，用于写入管理员 cookie。
+    @return ok=true 表示登录成功。
+    @throws HTTPException 凭据错误时返回 401。
+    """
+
     if not check_admin_credentials(body.username, body.password):
         raise HTTPException(status_code=401, detail="invalid credentials")
     create_admin_session(response)
@@ -56,12 +67,22 @@ async def login(body: LoginRequest, response: Response) -> dict[str, bool]:
 
 @router.post("/logout")
 async def logout(request: Request, response: Response) -> dict[str, bool]:
+    """@brief 清除管理端 session。
+    @param request FastAPI 请求对象，用于读取管理员 cookie。
+    @param response FastAPI 响应对象，用于删除管理员 cookie。
+    @return ok=true 表示退出完成。
+    """
+
     clear_admin_session(response, request.cookies.get(ADMIN_SESSION_COOKIE))
     return {"ok": True}
 
 
 @router.get("/config", dependencies=[Depends(require_admin)])
 async def get_config() -> dict[str, int]:
+    """@brief 返回当前端口池配置和剩余可用数量。
+    @return 端口池起止范围和 available_port_count。
+    """
+
     start, end = port_pool.get_range()
     return {
         "allocatable_port_range_start": start,
@@ -72,6 +93,13 @@ async def get_config() -> dict[str, int]:
 
 @router.put("/config", dependencies=[Depends(require_admin)])
 async def update_config(body: UpdateAllocatableRangeRequest) -> dict[str, bool]:
+    """@brief 更新可分配公网 TCP 端口范围。
+    @param body 新的闭区间 start/end。
+    @return ok=true 表示配置已持久化。
+    @throws HTTPException 范围非法或不能覆盖已分配端口时返回 400。
+    @note 缩小范围前会检查所有未删除 TCP 映射，避免已发脚本对应端口失效。
+    """
+
     if body.start < 1 or body.end > 65535:
         raise HTTPException(status_code=400, detail="端口范围必须在 1-65535 之间")
     if body.start > body.end:
@@ -102,6 +130,11 @@ async def update_config(body: UpdateAllocatableRangeRequest) -> dict[str, bool]:
 
 @router.get("/proxies", dependencies=[Depends(require_admin)])
 async def list_admin_proxies() -> dict[str, list[dict[str, object]]]:
+    """@brief 返回管理员视角的全量代理列表。
+    @return proxies 数组，包含用户归属、状态和展示访问地址。
+    @note XTCP 只能通过 visitor 访问，因此不生成 public_url。
+    """
+
     async with store.lock:
         proxies = [
             store.admin_proxy_to_dto(proxy)
@@ -136,6 +169,10 @@ async def list_admin_proxies() -> dict[str, list[dict[str, object]]]:
 
 @router.get("/users", dependencies=[Depends(require_admin)])
 async def list_admin_users() -> dict[str, list[dict[str, object]]]:
+    """@brief 返回管理员视角的注册用户列表。
+    @return users 数组，隐藏 password_hash。
+    """
+
     async with store.lock:
         users = [store.user_to_dto(user) for user in sorted(store.users.values(), key=lambda u: u.uid)]
     return {"users": users}
@@ -143,6 +180,12 @@ async def list_admin_users() -> dict[str, list[dict[str, object]]]:
 
 @router.post("/proxies/{proxy_id}/stop", dependencies=[Depends(require_admin)])
 async def stop_proxy(proxy_id: int) -> dict[str, bool]:
+    """@brief 管理员停用指定代理。
+    @param proxy_id 代理 ID。
+    @return ok=true 表示状态已切换为 stopped_by_admin。
+    @note 停用不释放端口，避免旧配置端口被其他用户立即占用。
+    """
+
     async with store.lock:
         proxy = store.proxies.get(proxy_id)
         if proxy is None or proxy.status == ProxyStatus.DELETED:
@@ -155,6 +198,13 @@ async def stop_proxy(proxy_id: int) -> dict[str, bool]:
 
 @router.post("/proxies/{proxy_id}/start", dependencies=[Depends(require_admin)])
 async def start_proxy(proxy_id: int) -> dict[str, bool]:
+    """@brief 管理员恢复指定代理。
+    @param proxy_id 代理 ID。
+    @return ok=true 表示状态已切回 active。
+    @throws HTTPException 用户余额不足或 TCP 端口已被占用时返回 400。
+    @note 恢复 TCP 代理会重新预留缺失的 remotePort。
+    """
+
     async with store.lock:
         proxy = store.proxies.get(proxy_id)
         if proxy is None or proxy.status == ProxyStatus.DELETED:
@@ -182,6 +232,12 @@ async def start_proxy(proxy_id: int) -> dict[str, bool]:
 
 @router.delete("/proxies/{proxy_id}", dependencies=[Depends(require_admin)])
 async def delete_proxy(proxy_id: int) -> dict[str, bool]:
+    """@brief 管理员物理删除指定代理记录。
+    @param proxy_id 代理 ID。
+    @return ok=true 表示删除完成。
+    @note TCP 代理删除时会释放全部公网端口；普通用户删除则保留逻辑删除记录。
+    """
+
     async with store.lock:
         proxy = store.proxies.pop(proxy_id, None)
         if proxy is None:
