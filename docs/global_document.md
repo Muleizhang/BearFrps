@@ -169,7 +169,7 @@ git diff --check
 当前验证结果：
 
 ```text
-33 passed
+37 passed
 SBOM.json ok
 Comment ratio check passed
 ```
@@ -200,6 +200,14 @@ Comment ratio check passed
 ```
 
 注释不应逐行翻译代码，应说明接口、约束、原因、副作用和业务规则。
+
+本项目同时提供可选的 `Doxyfile`。安装 Doxygen 和 Graphviz 后可运行：
+
+```bash
+./tools/generate_doxygen.sh
+```
+
+生成的 HTML 文档位于 `docs/doxygen/html/index.html`。生成目录已加入 `.gitignore`，不随源码提交。课程提交和日常自查仍以 `tools/check_comment_ratio.py` 的注释比例检查为准，Doxygen 仅作为辅助浏览 API 和源码说明的工具。
 
 ## 9. 开源合规
 

@@ -71,3 +71,13 @@ git diff --check
 ## 注释规范
 
 源码文件头参考 Doxygen 规范，使用 `@file`、`@brief`、`@author`、`@course`、`@date`、`@version`、`@copyright` 和 `@details` 标记。作者统一为 `BearFrps课程设计小组`，课程统一为 `武汉大学开源软件与技术课程 2026`。
+
+## 可选 Doxygen 文档
+
+项目提供 `Doxyfile`，可以在本机安装 Doxygen 和 Graphviz 后生成 HTML API 文档：
+
+```bash
+./tools/generate_doxygen.sh
+```
+
+生成结果位于 `docs/doxygen/html/index.html`，该目录已加入 `.gitignore`，不作为源码提交内容。课程注释门禁仍以 `tools/check_comment_ratio.py` 为准，Doxygen 只作为辅助浏览文档的工具。
