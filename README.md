@@ -1,5 +1,12 @@
 # BearFrps
 
+![API](https://img.shields.io/badge/API-FastAPI-009688)
+![Runtime](https://img.shields.io/badge/Runtime-Python-3776AB)
+![frp](https://img.shields.io/badge/frp-v0.58.1-0E83CD)
+![Storage](https://img.shields.io/badge/Storage-SQLite-003B57)
+![Docs](https://img.shields.io/badge/Docs-Doxygen-2C4AA8)
+![License](https://img.shields.io/badge/License-Apache--2.0-blue)
+
 BearFrps 是一个基于 frp/frps 的多用户动态连接管理平台。平台提供用户端、管理端和公网展示页，用户可以自助申请 frpc 配置和启动脚本，管理员可以查看连接、端口池和用户状态。
 
 - 作者：BearFrps课程设计小组
@@ -15,6 +22,30 @@ BearFrps 是一个基于 frp/frps 的多用户动态连接管理平台。平台�
 - frps 插件回调校验用户令牌、代理归属、端口和轮换版本。
 - 管理端查看用户、代理和端口池，支持启停和删除连接。
 - 公网展示页聚合在线 demo 服务入口。
+
+## 界面预览
+
+![用户端申请 HTTP 连接配置界面](docs/assets/user-create-http-proxy.png)
+
+## 架构总览
+
+```mermaid
+flowchart LR
+  Browser["浏览器\n/user /admin /show"] --> FastAPI["FastAPI 后端\nbackend/main.py"]
+  FastAPI --> Routes["API 路由\n用户 / 管理 / 展示"]
+  Routes --> Store["进程内 Store\nUser / Proxy / PortPool"]
+  Store --> Storage["本地持久化\nSQLite + users.json"]
+  Routes --> Renderer["脚本渲染\nfrpc.toml / 启动脚本"]
+  Renderer --> UserHost["用户本机\nfrpc + demo 服务"]
+  UserHost --> Frps["frps\n公网转发入口"]
+  Frps --> Plugin["HTTP 插件回调\n/frps-plugin"]
+  Plugin --> Store
+  Poller["UsagePoller\n状态和流量轮询"] --> FrpsAdmin["frps admin API"]
+  FrpsAdmin --> Frps
+  Poller --> Store
+  Public["公网访问者"] --> Frps
+  Frps --> UserHost
+```
 
 ## 快速启动
 
@@ -50,7 +81,7 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 ## 项目文档
 
-- [全局完整文档](docs/global_document.md)：汇总项目背景、架构、接口、运行方式、测试、Doxygen 注释规范、文档生成、许可证和开源合规。
+- [全局完整文档](docs/global_document.md)：汇总项目背景、项目分工、架构、接口、运行方式、测试、Doxygen 注释规范、文档生成、许可证和开源合规。
 - [口头报告与演示提纲](docs/oral_report.md)：整理课堂报告和现场演示的讲解顺序。
 - Doxygen HTML 文档：运行 `./tools/generate_doxygen.sh` 后打开 `docs/doxygen/html/index.html`。
 
