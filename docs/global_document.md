@@ -9,13 +9,13 @@ Git 仓库地址：<https://github.com/Muleizhang/BearFrps.git>
 
 ## 1. 项目概述
 
-BearFrps 是一个基于 frp/frps 的动态连接管理平台。项目面向课堂展示场景，把 frps、后端 API、用户端、管理端和公网展示页集中到同一套服务中，解决多人同时使用 frp 时的连接申请、端口分配、配置交付、在线状态展示和管理员控制问题。
+BearFrps 是一个基于 frp/frps 的多用户动态连接管理平台。项目把 frps、后端 API、用户端、管理端和公网展示页集中到同一套服务中，解决多人共享 frp 服务时的连接申请、端口分配、配置交付、在线状态展示和管理员控制问题。
 
 核心流程如下：
 
 1. 用户注册或登录。
 2. 用户领取演示流量。
-3. 用户创建 TCP、HTTP、STCP 或 XTCP 代理。
+3. 用户创建 TCP、HTTP 或 XTCP 代理。
 4. 后端分配端口、生成 frpc 配置和启动脚本。
 5. 用户本地运行 frpc 和 demo 留言板服务。
 6. frps 插件回调后端完成认证和代理参数校验。
@@ -64,7 +64,7 @@ frp v0.58.1 要求 frpc 的 `auth.token` 与 frps 的 `auth.token` 匹配，因�
 
 ### 4.2 端口池
 
-平台只管理 frps 的公网 `remotePort`，不管理用户机器上的 `localPort`。TCP 代理支持三种模式：
+平台分配 frps 的公网 `remotePort`，用户机器上的 `localPort` 由用户本地服务决定。TCP 代理支持三种模式：
 
 - `auto`：自动分配连续 remotePort。
 - `single`：用户指定单个 remotePort。
@@ -80,11 +80,11 @@ frp v0.58.1 要求 frpc 的 `auth.token` 与 frps 的 `auth.token` 匹配，因�
 - 用户余额小于等于 0。
 - 管理员手动停用代理。
 
-停用代理不会释放端口；删除代理才释放端口。
+停用代理会保留端口，删除代理时释放端口。
 
 ### 4.4 frp-Android 处理策略
 
-`frp-Android/` 是第三方 Apache-2.0 开源移动端 frp 项目。本项目当前把它作为可后续适配的移动端组件记录在 `NOTICE` 和 `SBOM.json` 中。本次不批量修改其源码。若后续修改，应遵守以下要求：
+`frp-Android/` 是第三方 Apache-2.0 开源移动端 frp 项目。当前仓库把它作为移动端适配组件记录在 `NOTICE` 和 `SBOM.json` 中，未改动其上游源码。移动端适配或上游源码修改遵循以下规则：
 
 - 保留上游 `LICENSE` 和版权声明。
 - 修改过的文件使用 Doxygen 风格注释标明修改者、课程和修改内容。
@@ -115,7 +115,7 @@ frp v0.58.1 要求 frpc 的 `auth.token` 与 frps 的 `auth.token` 匹配，因�
 | `POST` | `/api/admin/login` | 管理员登录 |
 | `POST` | `/api/admin/logout` | 管理员退出 |
 | `GET` | `/api/admin/config` | 获取端口池配置 |
-| `POST` | `/api/admin/config` | 修改端口池配置 |
+| `PUT` | `/api/admin/config` | 修改端口池配置 |
 | `GET` | `/api/admin/proxies` | 获取全量代理 |
 | `POST` | `/api/admin/proxies/{id}/stop` | 停用代理 |
 | `POST` | `/api/admin/proxies/{id}/start` | 恢复代理 |
@@ -152,11 +152,11 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 bash frps/start.sh
 ```
 
-部署前应通过 `.env` 修改默认管理员密码、frps admin 密码和内部认证 token。
+部署时在 `.env` 中设置管理员密码、frps admin 密码和内部认证 token。
 
 ## 7. 测试与质量保证
 
-本项目要求代码可无错误运行。提交前执行：
+质量检查命令如下：
 
 ```bash
 .venv/bin/python -m pytest -q
@@ -166,12 +166,13 @@ python -m json.tool SBOM.json >/dev/null
 git diff --check
 ```
 
-当前验证结果：
+最近一次验证结果：
 
 ```text
 37 passed
 SBOM.json ok
 Comment ratio check passed
+Doxygen HTML generated
 ```
 
 ## 8. Doxygen 注释规范
@@ -189,7 +190,7 @@ Comment ratio check passed
 @details 模块职责、依赖关系、关键业务规则和副作用
 ```
 
-函数或方法注释建议使用：
+函数或方法注释使用：
 
 ```text
 @brief 功能摘要
@@ -199,15 +200,15 @@ Comment ratio check passed
 @note 副作用、并发要求或安全注意事项
 ```
 
-注释不应逐行翻译代码，应说明接口、约束、原因、副作用和业务规则。
+注释关注接口、约束、原因、副作用和业务规则，不逐行复述代码。
 
-本项目同时提供可选的 `Doxyfile`。安装 Doxygen 和 Graphviz 后可运行：
+本项目同时提供 `Doxyfile`。安装 Doxygen 和 Graphviz 后可运行：
 
 ```bash
 ./tools/generate_doxygen.sh
 ```
 
-生成的 HTML 文档位于 `docs/doxygen/html/index.html`。生成目录已加入 `.gitignore`，不随源码提交。课程提交和日常自查仍以 `tools/check_comment_ratio.py` 的注释比例检查为准，Doxygen 仅作为辅助浏览 API 和源码说明的工具。
+生成的 HTML 文档位于 `docs/doxygen/html/index.html`。生成目录已加入 `.gitignore`，需要浏览时在本地重新生成即可。
 
 ## 9. 开源合规
 
@@ -216,7 +217,7 @@ BearFrps 根项目采用 Apache License 2.0。该许可证与 frp 和 frp-Androi
 | 组件 | 许可证 | 用途 |
 | --- | --- | --- |
 | frp v0.58.1 | Apache-2.0 | frps/frpc 协议和插件集成 |
-| frp-Android v1.3.2 | Apache-2.0 | 可后续适配的移动端 frp 客户端 |
+| frp-Android v1.3.2 | Apache-2.0 | 移动端 frp 客户端适配 |
 | FastAPI、Pydantic、pytest 等 Python 依赖 | MIT/BSD 系列 | 后端和测试 |
 | Tailwind CSS、Alpine.js | MIT | 前端页面 |
 
@@ -224,7 +225,7 @@ BearFrps 根项目采用 Apache License 2.0。该许可证与 frp 和 frp-Androi
 
 ## 10. 口头报告与演示安排
 
-演示目标是证明代码可运行、功能闭环完整、注释和文档符合课程要求。推荐演示顺序：
+建议按功能链路展开演示：
 
 1. 展示 Git 仓库地址和 README。
 2. 说明许可证、NOTICE、SBOM 和 frp/frp-Android 兼容性。
@@ -233,6 +234,6 @@ BearFrps 根项目采用 Apache License 2.0。该许可证与 frp 和 frp-Androi
 5. 注册用户、充值、创建代理并展示生成脚本。
 6. 打开管理端，展示用户、代理和端口池。
 7. 打开展示页，说明在线代理过滤规则。
-8. 说明 Doxygen 注释规范和 `tools/check_comment_ratio.py` 检查结果。
+8. 说明 Doxygen 注释规范、HTML 文档生成和 `tools/check_comment_ratio.py` 检查结果。
 
 详细演示稿见 `docs/oral_report.md`。
